@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: retirement-planner
+Version: 0.1.0
+Summary: A CLI retirement planning tool powered by Strands Agents and Amazon Bedrock
+Requires-Python: >=3.11
+Requires-Dist: pydantic>=2.0
+Requires-Dist: strands-agents>=0.1.0
+Requires-Dist: strands-agents-builder>=0.1.0
+Requires-Dist: boto3>=1.28
+Provides-Extra: dev
+Requires-Dist: hypothesis>=6.0; extra == "dev"
+Requires-Dist: pytest>=7.0; extra == "dev"

@@ -1,0 +1,18 @@
+services:
+  retirement-planner:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_PROFILE
+      - AWS_DEFAULT_REGION=us-east-1
+      - RETIREMENT_PLANNER_MODEL
+    volumes:
+      - sessions:/root/.retirement_planner/sessions
+      - ${HOME}/.aws:/root/.aws:ro
+
+volumes:
+  sessions:

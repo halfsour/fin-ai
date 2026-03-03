@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retirement Planner</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f5f5f5;--surface:#fff;--primary:#2563eb;--primary-hover:#1d4ed8;
+  --danger:#dc2626;--success:#16a34a;--text:#1e293b;--muted:#64748b;
+  --border:#e2e8f0;--sidebar-w:260px;--input-panel-w:340px;
+  --radius:8px;--shadow:0 1px 3px rgba(0,0,0,.1);
+}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--text);background:var(--bg)}
+button{cursor:pointer;font:inherit}
+input,select,textarea{font:inherit}
+
+/* Layout */
+.app{display:flex;height:100vh}
+
+/* Sidebar */
+.sidebar{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-header{padding:16px;font-size:18px;font-weight:700;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.sidebar-header svg{width:20px;height:20px;color:var(--primary)}
+.session-list{flex:1;overflow-y:auto;padding:8px}
+.session-item{padding:10px 12px;border-radius:var(--radius);cursor:pointer;margin-bottom:4px;font-size:13px;color:var(--muted);transition:background .15s}
+.session-item:hover,.session-item.active{background:var(--bg);color:var(--text)}
+.session-item .session-date{font-weight:600;color:var(--text)}
+.no-sessions{padding:16px;color:var(--muted);font-size:13px;text-align:center}
+
+/* Main area */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* Input panel (collapsible) */
+.input-panel{width:var(--input-panel-w);background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;padding:16px;display:flex;flex-direction:column;gap:12px}
+.input-panel.hidden{display:none}
+.input-panel h2{font-size:15px;font-weight:700;margin-bottom:4px}
+.input-panel h3{font-size:13px;font-weight:600;color:var(--muted);margin-top:8px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group label{font-size:12px;font-weight:600;color:var(--muted)}
+.form-group input,.form-group select{padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px}
+.form-group input:focus,.form-group select:focus{outline:none;border-color:var(--primary)}
+.form-group .field-error{font-size:11px;color:var(--danger)}
+
+/* File upload */
+.upload-section{border:2px dashed var(--border);border-radius:var(--radius);padding:12px;text-align:center;font-size:12px;color:var(--muted);transition:border-color .15s}
+.upload-section:hover{border-color:var(--primary)}
+.upload-section input[type=file]{display:none}
+.upload-section label{cursor:pointer;color:var(--primary);font-weight:600}
+.upload-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.upload-row select{flex:1}
+
+/* Uploaded data preview */
+.uploaded-data{background:var(--bg);border-radius:var(--radius);padding:8px;font-size:11px;max-height:120px;overflow-y:auto;margin-top:4px;white-space:pre-wrap;font-family:monospace}
+
+/* Children ages */
+.children-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.children-row input{width:50px}
+.btn-sm{padding:4px 10px;font-size:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.btn-sm:hover{background:var(--bg)}
+
+/* Primary button */
+.btn-primary{padding:10px 16px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius);font-weight:600;font-size:14px;transition:background .15s}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed}
+
+/* Toggle panel button */
+.toggle-panel{position:absolute;top:12px;left:calc(var(--sidebar-w) + 8px);z-index:10;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;font-size:12px;display:none}
+.toggle-panel.show{display:block}
+
+/* Chat area */
+.chat-container{display:flex;flex:1;min-height:0}
+.chat-area{flex:1;display:flex;flex-direction:column;min-width:0}
+.chat-thread{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px}
+.chat-welcome{text-align:center;color:var(--muted);margin:auto;max-width:400px}
+.chat-welcome h2{font-size:20px;color:var(--text);margin-bottom:8px}
+.chat-welcome p{font-size:14px}
+
+/* Messages */
+.msg{max-width:80%;padding:12px 16px;border-radius:var(--radius);font-size:14px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word}
+.msg.user{align-self:flex-end;background:var(--primary);color:#fff;border-bottom-right-radius:2px}
+.msg.agent{align-self:flex-start;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:2px}
+.msg.error{align-self:flex-start;background:#fef2f2;border:1px solid #fecaca;color:var(--danger)}
+.msg.system{align-self:center;background:var(--bg);color:var(--muted);font-size:12px;padding:6px 12px}
+.msg .streaming-cursor{display:inline-block;width:6px;height:14px;background:var(--primary);animation:blink 1s step-end infinite;vertical-align:text-bottom;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+
+/* Input bar */
+.input-bar{padding:12px 20px;border-top:1px solid var(--border);background:var(--surface);display:flex;gap:8px;align-items:center}
+.input-bar input{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px}
+.input-bar input:focus{outline:none;border-color:var(--primary)}
+.input-bar input:disabled{background:var(--bg);color:var(--muted)}
+.input-bar button{padding:10px 18px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius);font-weight:600}
+.input-bar button:hover{background:var(--primary-hover)}
+.input-bar button:disabled{opacity:.5;cursor:not-allowed}
+
+/* Spinner */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Thinking indicator */
+.thinking-indicator{display:flex;align-items:center;gap:10px;padding:4px 0;color:var(--muted);font-size:13px;font-style:italic}
+.thinking-indicator .thinking-dot{display:flex;gap:3px}
+.thinking-indicator .thinking-dot span{width:6px;height:6px;background:var(--primary);border-radius:50%;animation:bounce .6s ease-in-out infinite}
+.thinking-indicator .thinking-dot span:nth-child(2){animation-delay:.15s}
+.thinking-indicator .thinking-dot span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
+.thinking-indicator .thinking-text{transition:opacity .2s ease}
+
+/* Suggestion chips */
+.suggestion-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.suggestion-chip{padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:20px;font-size:12px;color:var(--primary);cursor:pointer;transition:all .15s;line-height:1.3;display:inline-block}
+.suggestion-chip:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+.suggestion-chip:active{transform:scale(0.97)}
+
+/* Rich assessment card */
+.assessment-card{font-size:14px;line-height:1.6}
+.assessment-card .card-header{text-align:center;padding:16px 0 12px;border-bottom:2px solid var(--border);margin-bottom:16px}
+.assessment-card .card-header h3{font-size:18px;font-weight:700;margin-bottom:4px}
+.assessment-card .readiness-badge{display:inline-block;padding:4px 16px;border-radius:20px;font-weight:700;font-size:14px;letter-spacing:.5px}
+.assessment-card .readiness-badge.yes{background:#dcfce7;color:#15803d}
+.assessment-card .readiness-badge.no{background:#fef2f2;color:#b91c1c}
+.assessment-card .summary-text{margin:12px 0;color:var(--text);white-space:pre-wrap}
+.assessment-card .fin-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0}
+.assessment-card .fin-stat{background:var(--bg);border-radius:var(--radius);padding:12px;text-align:center}
+.assessment-card .fin-stat .stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:2px}
+.assessment-card .fin-stat .stat-value{font-size:20px;font-weight:700;color:var(--text)}
+.assessment-card .fin-stat .stat-value.positive{color:var(--success)}
+.assessment-card .fin-stat .stat-value.negative{color:var(--danger)}
+.assessment-card .section-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.assessment-card table{width:100%;border-collapse:collapse;font-size:13px}
+.assessment-card table th{text-align:left;padding:6px 8px;background:var(--bg);font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.assessment-card table td{padding:6px 8px;border-bottom:1px solid var(--border)}
+.assessment-card table td:last-child{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.assessment-card table tr.total-row td{border-top:2px solid var(--text);font-weight:700}
+.assessment-card .chart-container{display:flex;align-items:center;gap:16px;margin:12px 0;flex-wrap:wrap;justify-content:center}
+.assessment-card .chart-legend{display:flex;flex-direction:column;gap:4px;font-size:12px}
+.assessment-card .chart-legend .legend-item{display:flex;align-items:center;gap:6px}
+.assessment-card .chart-legend .legend-swatch{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+.assessment-card .disclaimer-text{margin-top:16px;padding:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:var(--radius);font-size:11px;color:#92400e;line-height:1.4}
+
+/* Assumption summary card */
+.assumption-card{font-size:14px;line-height:1.6}
+.assumption-card .card-header{text-align:center;padding:12px 0 10px;border-bottom:2px solid var(--border);margin-bottom:12px}
+.assumption-card .card-header h3{font-size:16px;font-weight:700}
+.assumption-card .section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.assumption-card table{width:100%;border-collapse:collapse;font-size:13px}
+.assumption-card table td{padding:5px 8px;border-bottom:1px solid var(--border)}
+.assumption-card table td:first-child{color:var(--muted);font-size:12px}
+.assumption-card table td:last-child{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+
+/* Responsive */
+@media(max-width:900px){
+  .sidebar{width:200px}
+  .input-panel{width:280px}
+}
+@media(max-width:700px){
+  .sidebar{display:none}
+  .input-panel{width:100%;position:absolute;z-index:20;height:100%;top:0;left:0}
+  .toggle-panel{left:8px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar: session list -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1"/></svg>
+      Retirement Planner
+    </div>
+    <div class="session-list" id="sessionList">
+      <div class="no-sessions">No previous sessions</div>
+    </div>
+  </aside>
+
+  <!-- Chat container with optional input panel -->
+  <div class="chat-container">
+    <!-- Data input panel -->
+    <div class="input-panel" id="inputPanel">
+      <h2>Financial Data</h2>
+
+      <!-- File upload -->
+      <h3>Upload Files</h3>
+      <div class="upload-section" id="uploadSection">
+        <label for="fileInput">Choose a file</label> or drag &amp; drop
+        <input type="file" id="fileInput" multiple>
+        <div class="upload-row">
+          <button class="btn-sm" id="uploadBtn" type="button">Upload</button>
+        </div>
+      </div>
+      <div id="uploadStatus"></div>
+      <div id="uploadedPreviews"></div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+
+      <!-- Personal info -->
+      <h3>Personal Information</h3>
+      <div class="form-group">
+        <label for="husbandDob">Husband's Date of Birth</label>
+        <input type="date" id="husbandDob" placeholder="YYYY-MM-DD">
+        <span class="field-error" id="husbandDobErr"></span>
+      </div>
+      <div class="form-group">
+        <label for="wifeDob">Wife's Date of Birth</label>
+        <input type="date" id="wifeDob" placeholder="YYYY-MM-DD">
+        <span class="field-error" id="wifeDobErr"></span>
+      </div>
+      <div class="form-group">
+        <label>Children's Dates of Birth</label>
+        <div class="children-row" id="childrenRow"></div>
+        <button class="btn-sm" id="addChildBtn" type="button">+ Add Child</button>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+
+      <!-- Manual financial entry (optional) -->
+      <details>
+        <summary style="font-size:13px;font-weight:600;color:var(--muted);cursor:pointer">Manual Financial Entry</summary>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">
+          <!-- Investments -->
+          <h3>Investments</h3>
+          <div id="investmentEntries"></div>
+          <button class="btn-sm" id="addInvestmentBtn" type="button">+ Add Investment</button>
+
+          <!-- Bank Accounts -->
+          <h3>Bank Accounts</h3>
+          <div id="bankEntries"></div>
+          <button class="btn-sm" id="addBankBtn" type="button">+ Add Bank Account</button>
+
+          <!-- Credit Cards -->
+          <h3>Credit Cards</h3>
+          <div id="creditCardEntries"></div>
+          <button class="btn-sm" id="addCreditCardBtn" type="button">+ Add Credit Card</button>
+        </div>
+      </details>
+
+      <button class="btn-primary" id="submitAssessment" type="button" style="margin-top:auto">Run Assessment</button>
+    </div>
+
+    <!-- Chat area -->
+    <div class="chat-area">
+      <div class="chat-thread" id="chatThread">
+        <div class="chat-welcome">
+          <h2>Welcome to Retirement Planner</h2>
+          <p>Upload your financial files or enter data manually in the left panel, then click "Run Assessment" to get started.</p>
+        </div>
+      </div>
+      <div class="input-bar" id="inputBar">
+        <input type="file" id="chatFileInput" multiple style="display:none">
+        <button id="chatFileBtn" title="Upload a file" disabled style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:16px;color:var(--muted);transition:all .15s">📎</button>
+        <input type="text" id="followUpInput" placeholder="Ask a follow-up question..." disabled>
+        <button id="followUpBtn" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+  sessionId: null,
+  streaming: false,
+  uploadedData: {investments: null, banking: null, credit_cards: null, spending: null},
+};
+
+// ============================================================
+// DOM refs
+// ============================================================
+const $ = (sel) => document.querySelector(sel);
+const chatThread = $('#chatThread');
+const followUpInput = $('#followUpInput');
+const followUpBtn = $('#followUpBtn');
+const sessionListEl = $('#sessionList');
+const inputPanel = $('#inputPanel');
+
+// ============================================================
+// Helpers
+// ============================================================
+function scrollToBottom() {
+  chatThread.scrollTop = chatThread.scrollHeight;
+}
+
+function setStreaming(on) {
+  state.streaming = on;
+  followUpInput.disabled = on || !state.sessionId;
+  followUpBtn.disabled = on || !state.sessionId;
+  const cfb = document.getElementById('chatFileBtn');
+  if (cfb) cfb.disabled = on || !state.sessionId;
+  $('#submitAssessment').disabled = on;
+}
+
+function addMessage(text, cls) {
+  // Remove welcome message if present
+  const welcome = chatThread.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+  const div = document.createElement('div');
+  div.className = 'msg ' + cls;
+  if (cls === 'agent') {
+    div.style.whiteSpace = 'normal';
+    div.innerHTML = formatAgentText(text);
+  } else {
+    div.textContent = text;
+  }
+  chatThread.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function formatAgentText(text) {
+  if (!text) return '';
+
+  // Extract suggested follow-ups before processing
+  let suggestions = [];
+  let mainText = text;
+  // Try multiple marker formats
+  const markers = ['SUGGESTED_FOLLOWUPS:', 'SUGGESTED FOLLOWUPS:', 'Suggested follow-ups:', 'SUGGESTED_FOLLOWUPS', 'Suggested followups:'];
+  for (const marker of markers) {
+    const idx = text.indexOf(marker);
+    if (idx !== -1) {
+      mainText = text.slice(0, idx).trimEnd();
+      const sugSection = text.slice(idx + marker.length);
+      const sugLines = sugSection.split('\n');
+      for (const sl of sugLines) {
+        const m = sl.trim().match(/^[-•*]\s*(.+)/);
+        if (m && m[1].trim()) suggestions.push(m[1].trim());
+      }
+      break;
+    }
+  }
+
+  const lines = mainText.split('\n');
+  let html = '';
+  let tableRows = [];
+  let tableHeader = null;
+  let isFirstTableRow = true;
+
+  function inlineFormat(s) {
+    // Markdown links: [text](url) — process BEFORE escHTML to preserve the URL
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '%%LINK%%$1%%HREF%%$2%%ENDLINK%%');
+    // Bare URLs
+    s = s.replace(/(https?:\/\/[^\s<>"')\]]+)/g, '%%BARELINK%%$1%%ENDBARELINK%%');
+    s = escHTML(s);
+    // Restore links after escaping
+    s = s.replace(/%%LINK%%(.+?)%%HREF%%(.+?)%%ENDLINK%%/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:underline">$1</a>');
+    s = s.replace(/%%BARELINK%%(.+?)%%ENDBARELINK%%/g, '<a href="$1" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:underline;font-size:12px;word-break:break-all">$1</a>');
+    // Bold: **text** or __text__
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    // Inline code: `text`
+    s = s.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>');
+    return s;
+  }
+
+  function flushTable() {
+    if (!tableRows.length) return '';
+    let t = '<div style="overflow-x:auto;margin:8px 0"><table style="width:100%;border-collapse:collapse;font-size:12px">';
+    for (let r = 0; r < tableRows.length; r++) {
+      const row = tableRows[r];
+      const isHeader = r === 0 && tableHeader;
+      t += '<tr>';
+      for (const cell of row) {
+        const tag = isHeader ? 'th' : 'td';
+        const isNum = /^\s*[\$\-~]?[\d,\.%]+[KkMm]?\s*$/.test(cell) || /^\s*\$/.test(cell) || /^\s*-?\$/.test(cell);
+        const align = isNum ? 'text-align:right;font-variant-numeric:tabular-nums' : '';
+        const bold = /^\*\*.*\*\*$/.test(cell) ? 'font-weight:700' : '';
+        const cleanCell = cell.replace(/^\*\*|\*\*$/g, '');
+        const headerStyle = isHeader ? 'background:var(--bg);font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.3px' : '';
+        t += '<' + tag + ' style="padding:5px 8px;border-bottom:1px solid var(--border);' + align + ';' + bold + ';' + headerStyle + '">' + inlineFormat(cleanCell) + '</' + tag + '>';
+      }
+      t += '</tr>';
+    }
+    t += '</table></div>';
+    tableRows = [];
+    tableHeader = null;
+    isFirstTableRow = true;
+    return t;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip pure separator lines (═══, ---, ===)
+    if (/^[═=]{3,}$/.test(trimmed)) { html += flushTable(); continue; }
+
+    // Markdown headers: # ## ### ####
+    const mdHeader = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (mdHeader) {
+      html += flushTable();
+      const level = mdHeader[1].length;
+      const title = mdHeader[2].replace(/^[✅🔴🟢🟡⚠️📊💰🏠📈]\s*/, function(m) { return m; }); // keep emoji
+      const sizes = {1:'18px',2:'16px',3:'14px',4:'13px'};
+      const margins = {1:'20px 0 10px',2:'16px 0 8px',3:'12px 0 6px',4:'10px 0 4px'};
+      const border = level <= 2 ? 'padding-bottom:6px;border-bottom:' + (level===1?'2':'1') + 'px solid var(--border);' : '';
+      html += '<div style="font-size:' + sizes[level] + ';font-weight:700;margin:' + margins[level] + ';color:var(--text);' + border + '">' + inlineFormat(title) + '</div>';
+      continue;
+    }
+
+    // CLI-style section headers: "--- Something ---" or "── Something ──"
+    if (/^[-─═]{2,}\s+.+\s+[-─═]{2,}$/.test(trimmed)) {
+      html += flushTable();
+      const title = trimmed.replace(/^[-─═]+\s*/, '').replace(/\s*[-─═]+$/, '');
+      html += '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border)">' + inlineFormat(title) + '</div>';
+      continue;
+    }
+
+    // All-caps header lines
+    if (/^[A-Z][A-Z\s—\-]{4,}$/.test(trimmed) && trimmed.length < 80) {
+      html += flushTable();
+      html += '<div style="font-size:16px;font-weight:700;text-align:center;margin:12px 0 8px;color:var(--text)">' + escHTML(trimmed) + '</div>';
+      continue;
+    }
+
+    // Pipe-delimited table rows: "| col1 | col2 |" or "col1|col2"
+    if (/\|/.test(trimmed)) {
+      // Table separator line: |---|---|
+      if (/^\|?[\s\-:]+(\|[\s\-:]+)+\|?$/.test(trimmed)) {
+        if (tableRows.length === 1) tableHeader = true;
+        continue;
+      }
+      const cells = trimmed.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      if (cells.length >= 2 && cells.some(c => c.length > 0)) {
+        tableRows.push(cells);
+        continue;
+      }
+    }
+
+    // If we were in a table and hit a non-table line, flush
+    if (tableRows.length) { html += flushTable(); }
+
+    // Numbered list items: "1) text", "1. text", "1.text"
+    const numMatch = trimmed.match(/^(\d+)[.)]\s*(.+)$/);
+    if (numMatch) {
+      html += '<div style="display:flex;gap:8px;padding:3px 0;font-size:13px;margin-left:4px">';
+      html += '<span style="color:var(--primary);font-weight:700;flex-shrink:0">' + numMatch[1] + '.</span>';
+      html += '<span>' + inlineFormat(numMatch[2]) + '</span>';
+      html += '</div>';
+      continue;
+    }
+
+    // Lettered sub-items: "(a) text"
+    const letterMatch = trimmed.match(/^\(([a-z])\)\s+(.+)$/);
+    if (letterMatch) {
+      html += '<div style="display:flex;gap:8px;padding:2px 0;font-size:13px;margin-left:24px">';
+      html += '<span style="color:var(--muted);font-weight:600">(' + letterMatch[1] + ')</span>';
+      html += '<span>' + inlineFormat(letterMatch[2]) + '</span>';
+      html += '</div>';
+      continue;
+    }
+
+    // Bullet points: "- text", "• text", "* text" (but not ** bold)
+    if (/^[-•]\s+/.test(trimmed) || (/^\*\s+/.test(trimmed) && !/^\*\*/.test(trimmed))) {
+      const bulletText = trimmed.replace(/^[-•*]\s+/, '');
+      html += '<div style="display:flex;gap:8px;padding:2px 0;font-size:13px;margin-left:4px">';
+      html += '<span style="color:var(--primary);flex-shrink:0">•</span>';
+      html += '<span>' + inlineFormat(bulletText) + '</span>';
+      html += '</div>';
+      continue;
+    }
+
+    // Key-value lines: "Key: value" or "- Key: value"
+    const kvMatch = trimmed.match(/^(.+?):\s+(.+)$/);
+    if (kvMatch && !trimmed.startsWith('http') && kvMatch[1].length < 80 && !/^[A-Z].*[a-z].*[A-Z]/.test(kvMatch[2]) === false) {
+      // Only treat as key-value if key is short-ish and doesn't look like a sentence
+      const key = kvMatch[1].replace(/^\*\*|\*\*$/g, '').trim();
+      const val = kvMatch[2].replace(/^\*\*|\*\*$/g, '').trim();
+      if (key.split(' ').length <= 6) {
+        html += '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;gap:12px;flex-wrap:wrap">';
+        html += '<span style="color:var(--muted)">' + inlineFormat(key) + '</span>';
+        const isMonetary = /^[\$~\-]/.test(val) || /^\d[\d,]*%/.test(val);
+        const valStyle = isMonetary ? 'font-weight:600;font-variant-numeric:tabular-nums' : '';
+        html += '<span style="' + valStyle + '">' + inlineFormat(val) + '</span>';
+        html += '</div>';
+        continue;
+      }
+    }
+
+    // Empty lines
+    if (!trimmed) {
+      html += '<div style="height:6px"></div>';
+      continue;
+    }
+
+    // Regular paragraph text
+    html += '<div style="font-size:13px;line-height:1.6;padding:2px 0">' + inlineFormat(trimmed) + '</div>';
+  }
+
+  html += flushTable();
+
+  // Append suggestion chips if any
+  if (suggestions.length) {
+    html += '<div class="suggestion-chips">';
+    for (const s of suggestions) {
+      html += '<button class="suggestion-chip" data-question="' + escHTML(s) + '">' + escHTML(s) + '</button>';
+    }
+    html += '</div>';
+  }
+
+  return html;
+}
+
+const THINKING_PHRASES = [
+  'Analyzing your financial data...',
+  'Crunching the numbers...',
+  'Reviewing investment allocations...',
+  'Calculating retirement projections...',
+  'Evaluating cash flow patterns...',
+  'Assessing Social Security options...',
+  'Modeling inflation scenarios...',
+  'Reviewing tax implications...',
+  'Building your retirement roadmap...',
+  'Optimizing budget recommendations...',
+  'Factoring in market assumptions...',
+  'Running Monte Carlo simulations...',
+  'Checking withdrawal strategies...',
+  'Estimating healthcare costs...',
+  'Balancing risk and growth...',
+];
+
+let _thinkingInterval = null;
+let _streamBuffer = ''; // accumulates raw streamed text
+let _renderedUpTo = 0; // how many chars of _streamBuffer have been rendered as rich HTML
+
+function startAgentMessage() {
+  const welcome = chatThread.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+  const div = document.createElement('div');
+  div.className = 'msg agent';
+  div.style.whiteSpace = 'normal';
+
+  const thinkingEl = document.createElement('div');
+  thinkingEl.className = 'thinking-indicator';
+  thinkingEl.innerHTML = '<div class="thinking-dot"><span></span><span></span><span></span></div><span class="thinking-text"></span>';
+  div.appendChild(thinkingEl);
+
+  const textSpan = thinkingEl.querySelector('.thinking-text');
+  let phraseIdx = Math.floor(Math.random() * THINKING_PHRASES.length);
+  textSpan.textContent = THINKING_PHRASES[phraseIdx];
+
+  if (_thinkingInterval) clearInterval(_thinkingInterval);
+  _thinkingInterval = setInterval(() => {
+    phraseIdx = (phraseIdx + 1) % THINKING_PHRASES.length;
+    textSpan.style.opacity = '0';
+    setTimeout(() => {
+      textSpan.textContent = THINKING_PHRASES[phraseIdx];
+      textSpan.style.opacity = '1';
+    }, 200);
+  }, 2500);
+
+  _streamBuffer = '';
+  _renderedUpTo = 0;
+  chatThread.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function appendToAgent(el, text) {
+  // On first real content, remove the thinking indicator and set up structure
+  const thinking = el.querySelector('.thinking-indicator');
+  if (thinking) {
+    thinking.remove();
+    if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
+    // Create two zones: rendered (rich HTML) and tail (streaming plain text)
+    const rendered = document.createElement('div');
+    rendered.className = 'agent-rendered';
+    const tail = document.createElement('div');
+    tail.className = 'agent-tail';
+    tail.style.whiteSpace = 'pre-wrap';
+    el.style.whiteSpace = 'normal';
+    el.appendChild(rendered);
+    el.appendChild(tail);
+  }
+
+  _streamBuffer += text;
+
+  const renderedEl = el.querySelector('.agent-rendered');
+  const tailEl = el.querySelector('.agent-tail');
+  if (!renderedEl || !tailEl) {
+    // Fallback if structure wasn't set up
+    el.textContent = _streamBuffer;
+    scrollToBottom();
+    return;
+  }
+
+  // Find the last section break in the buffer
+  // Sections end at: \n---\n or \n\n## or \n\n (double newline)
+  let lastBreak = -1;
+  const breakPatterns = ['\n---\n', '\n\n## ', '\n\n# '];
+  for (const pat of breakPatterns) {
+    const idx = _streamBuffer.lastIndexOf(pat);
+    if (idx > _renderedUpTo && idx > lastBreak) {
+      lastBreak = idx + (pat === '\n---\n' ? 5 : pat.length);
+    }
+  }
+  // Also check for double-newline breaks (but only if we have enough content)
+  if (lastBreak === -1 && _streamBuffer.length > _renderedUpTo + 300) {
+    const idx = _streamBuffer.lastIndexOf('\n\n');
+    if (idx > _renderedUpTo + 100) {
+      lastBreak = idx + 2;
+    }
+  }
+
+  if (lastBreak > _renderedUpTo) {
+    // Render completed sections as rich HTML
+    const completedText = _streamBuffer.slice(0, lastBreak);
+    renderedEl.innerHTML = formatAgentText(completedText);
+    _renderedUpTo = lastBreak;
+  }
+
+  // Show the remaining unrendered tail as plain text
+  const remaining = _streamBuffer.slice(_renderedUpTo);
+  tailEl.textContent = remaining;
+  scrollToBottom();
+}
+
+function finalizeAgent(el) {
+  // Prevent double-finalization
+  if (el.dataset.finalized) return;
+  el.dataset.finalized = 'true';
+
+  // Clean up thinking indicators
+  el.querySelectorAll('.thinking-indicator').forEach(t => t.remove());
+  if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
+
+  // Final render: convert everything to rich HTML
+  if (el.parentNode && !el.querySelector('.assessment-card') && !el.querySelector('.assumption-card')) {
+    const rawText = _streamBuffer;
+    if (rawText && rawText.trim()) {
+      el.style.whiteSpace = 'normal';
+      el.innerHTML = formatAgentText(rawText);
+    } else {
+      // Buffer was empty — try to get text from the element itself
+      const existingText = el.textContent;
+      if (existingText && existingText.trim()) {
+        el.style.whiteSpace = 'normal';
+        el.innerHTML = formatAgentText(existingText);
+      }
+    }
+    _streamBuffer = '';
+    _renderedUpTo = 0;
+  }
+}
+
+function formatCurrency(v) {
+  const n = Number(v);
+  if (n < 0) return '-$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+const CHART_COLORS = [
+  '#2563eb','#16a34a','#eab308','#dc2626','#8b5cf6',
+  '#06b6d4','#f97316','#ec4899','#14b8a6','#6366f1',
+  '#84cc16','#f43f5e','#0ea5e9','#a855f7','#10b981'
+];
+
+function renderAssessmentHTML(a) {
+  const readyCls = a.can_retire ? 'yes' : 'no';
+  const readyText = a.can_retire ? 'YES' : 'NO';
+  const nwCls = a.net_worth >= 0 ? 'positive' : 'negative';
+  const cfCls = a.monthly_cash_flow >= 0 ? 'positive' : 'negative';
+
+  let budgetRows = '';
+  let budgetTotal = 0;
+  const budget = a.recommended_monthly_budget || [];
+  for (const item of budget) {
+    budgetRows += '<tr><td>' + escHTML(item.category) + '</td><td>' + formatCurrency(item.amount) + '</td></tr>';
+    budgetTotal += item.amount;
+  }
+  if (budget.length) {
+    budgetRows += '<tr class="total-row"><td>Total</td><td>' + formatCurrency(budgetTotal) + '</td></tr>';
+  }
+
+  let html = '<div class="assessment-card">';
+  html += '<div class="card-header"><h3>Retirement Assessment</h3>';
+  html += '<span class="readiness-badge ' + readyCls + '">Retirement Ready: ' + readyText + '</span></div>';
+  html += '<div class="summary-text">' + escHTML(a.retirement_readiness_summary) + '</div>';
+
+  // Financial summary grid
+  html += '<div class="section-title">Financial Summary</div>';
+  html += '<div class="fin-grid">';
+  html += '<div class="fin-stat"><div class="stat-label">Net Worth</div><div class="stat-value ' + nwCls + '">' + formatCurrency(a.net_worth) + '</div></div>';
+  html += '<div class="fin-stat"><div class="stat-label">Monthly Cash Flow</div><div class="stat-value ' + cfCls + '">' + formatCurrency(a.monthly_cash_flow) + '</div></div>';
+  html += '</div>';
+
+  // Budget table + chart
+  if (budget.length) {
+    html += '<div class="section-title">Recommended Monthly Budget</div>';
+    html += '<div class="chart-container">';
+    html += '<canvas id="budgetChart_' + Date.now() + '" width="160" height="160"></canvas>';
+    html += '<div class="chart-legend">';
+    budget.forEach((item, i) => {
+      const color = CHART_COLORS[i % CHART_COLORS.length];
+      const pct = budgetTotal > 0 ? Math.round(item.amount / budgetTotal * 100) : 0;
+      html += '<div class="legend-item"><span class="legend-swatch" style="background:' + color + '"></span>' + escHTML(item.category) + ' — ' + formatCurrency(item.amount) + ' (' + pct + '%)</div>';
+    });
+    html += '</div></div>';
+    html += '<table><thead><tr><th>Category</th><th style="text-align:right">Amount</th></tr></thead><tbody>' + budgetRows + '</tbody></table>';
+  }
+
+  // Disclaimer
+  if (a.disclaimer) {
+    html += '<div class="disclaimer-text">' + escHTML(a.disclaimer) + '</div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function escHTML(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function drawDoughnutChart(canvas, items, total) {
+  const ctx = canvas.getContext('2d');
+  const cx = canvas.width / 2, cy = canvas.height / 2, r = Math.min(cx, cy) - 4;
+  const innerR = r * 0.55;
+  let startAngle = -Math.PI / 2;
+
+  for (let i = 0; i < items.length; i++) {
+    const slice = (items[i].amount / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, startAngle, startAngle + slice);
+    ctx.arc(cx, cy, innerR, startAngle + slice, startAngle, true);
+    ctx.closePath();
+    ctx.fillStyle = CHART_COLORS[i % CHART_COLORS.length];
+    ctx.fill();
+    startAngle += slice;
+  }
+
+  // Center text
+  ctx.fillStyle = '#1e293b';
+  ctx.font = 'bold 14px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(formatCurrency(total), cx, cy - 6);
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.fillStyle = '#64748b';
+  ctx.fillText('/month', cx, cy + 10);
+}
+
+function addRichAssessment(a) {
+  const welcome = chatThread.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+  const div = document.createElement('div');
+  div.className = 'msg agent';
+  div.style.whiteSpace = 'normal';
+  div.innerHTML = renderAssessmentHTML(a);
+  chatThread.appendChild(div);
+  scrollToBottom();
+
+  // Draw the chart after DOM insertion
+  const budget = a.recommended_monthly_budget || [];
+  if (budget.length) {
+    const canvas = div.querySelector('canvas');
+    if (canvas) {
+      let total = 0;
+      for (const item of budget) total += item.amount;
+      drawDoughnutChart(canvas, budget, total);
+    }
+  }
+  return div;
+}
+
+// Plain text fallback for renderAssessment (used in session history)
+function renderAssessment(a) {
+  let lines = [];
+  lines.push('Retirement Ready: ' + (a.can_retire ? 'YES' : 'NO'));
+  lines.push('');
+  lines.push(a.retirement_readiness_summary);
+  lines.push('');
+  lines.push('Net Worth: ' + formatCurrency(a.net_worth));
+  lines.push('Monthly Cash Flow: ' + formatCurrency(a.monthly_cash_flow));
+  if (a.recommended_monthly_budget && a.recommended_monthly_budget.length) {
+    let total = 0;
+    for (const item of a.recommended_monthly_budget) {
+      lines.push('  ' + item.category + ': ' + formatCurrency(item.amount));
+      total += item.amount;
+    }
+    lines.push('  Total: ' + formatCurrency(total));
+  }
+  if (a.disclaimer) lines.push('\n' + a.disclaimer);
+  return lines.join('\n');
+}
+
+// ============================================================
+// Validation
+// ============================================================
+function clearErrors() {
+  document.querySelectorAll('.field-error').forEach(e => e.textContent = '');
+}
+
+function validateAge(id, label) {
+  const el = document.getElementById(id);
+  const errEl = document.getElementById(id + 'Err');
+  const v = el.value.trim();
+  if (!v) { errEl.textContent = label + ' is required'; return null; }
+  return v; // return the date string
+}
+
+function getChildrenAges() {
+  const inputs = document.querySelectorAll('#childrenRow input');
+  const dates = [];
+  for (const inp of inputs) {
+    const v = inp.value.trim();
+    if (v) dates.push(v);
+  }
+  return dates;
+}
+
+// ============================================================
+// Manual financial data collection
+// ============================================================
+function collectManualInvestments() {
+  const entries = document.querySelectorAll('#investmentEntries .entry-row');
+  const items = [];
+  for (const row of entries) {
+    const type = row.querySelector('.inv-type').value.trim();
+    const bal = parseFloat(row.querySelector('.inv-balance').value);
+    const ret = parseFloat(row.querySelector('.inv-return').value);
+    if (type && !isNaN(bal) && !isNaN(ret)) {
+      items.push({account_type: type, balance: bal, expected_annual_return: ret, holdings: ''});
+    }
+  }
+  return items;
+}
+
+function collectManualBanks() {
+  const entries = document.querySelectorAll('#bankEntries .entry-row');
+  const items = [];
+  for (const row of entries) {
+    const type = row.querySelector('.bank-type').value;
+    const bal = parseFloat(row.querySelector('.bank-balance').value);
+    const inc = parseFloat(row.querySelector('.bank-income').value);
+    if (type && !isNaN(bal) && !isNaN(inc)) {
+      items.push({account_type: type, balance: bal, monthly_income_deposits: inc});
+    }
+  }
+  return items;
+}
+
+function collectManualCreditCards() {
+  const entries = document.querySelectorAll('#creditCardEntries .entry-row');
+  const items = [];
+  for (const row of entries) {
+    const bal = parseFloat(row.querySelector('.cc-balance').value);
+    const lim = parseFloat(row.querySelector('.cc-limit').value);
+    const pay = parseFloat(row.querySelector('.cc-payment').value);
+    if (!isNaN(bal) && !isNaN(lim) && !isNaN(pay)) {
+      items.push({outstanding_balance: bal, credit_limit: lim, monthly_payment: pay});
+    }
+  }
+  return items;
+}
+
+function buildProfile() {
+  const investments = state.uploadedData.investments || collectManualInvestments();
+  const bank_accounts = state.uploadedData.banking || collectManualBanks();
+  const credit_cards = state.uploadedData.credit_cards || collectManualCreditCards();
+  const spending = state.uploadedData.spending || [];
+  return {investments, bank_accounts, credit_cards, spending};
+}
+
+// ============================================================
+// Dynamic form entry rows
+// ============================================================
+function addInvestmentRow() {
+  const container = $('#investmentEntries');
+  const row = document.createElement('div');
+  row.className = 'entry-row';
+  row.style.cssText = 'display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap';
+  row.innerHTML = `
+    <input class="inv-type" placeholder="Type" style="width:70px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <input class="inv-balance" type="number" placeholder="Balance" style="width:80px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <input class="inv-return" type="number" step="0.1" placeholder="Return %" style="width:70px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <button class="btn-sm" onclick="this.parentElement.remove()" type="button" style="padding:2px 6px">×</button>`;
+  container.appendChild(row);
+}
+
+function addBankRow() {
+  const container = $('#bankEntries');
+  const row = document.createElement('div');
+  row.className = 'entry-row';
+  row.style.cssText = 'display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap';
+  row.innerHTML = `
+    <select class="bank-type" style="width:80px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <option value="checking">Checking</option><option value="savings">Savings</option>
+    </select>
+    <input class="bank-balance" type="number" placeholder="Balance" style="width:80px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <input class="bank-income" type="number" placeholder="Monthly Income" style="width:90px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <button class="btn-sm" onclick="this.parentElement.remove()" type="button" style="padding:2px 6px">×</button>`;
+  container.appendChild(row);
+}
+
+function addCreditCardRow() {
+  const container = $('#creditCardEntries');
+  const row = document.createElement('div');
+  row.className = 'entry-row';
+  row.style.cssText = 'display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap';
+  row.innerHTML = `
+    <input class="cc-balance" type="number" placeholder="Balance" style="width:75px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <input class="cc-limit" type="number" placeholder="Limit" style="width:75px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <input class="cc-payment" type="number" placeholder="Payment" style="width:75px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+    <button class="btn-sm" onclick="this.parentElement.remove()" type="button" style="padding:2px 6px">×</button>`;
+  container.appendChild(row);
+}
+
+function addChildInput() {
+  const row = $('#childrenRow');
+  const inp = document.createElement('input');
+  inp.type = 'date';
+  inp.style.cssText = 'width:130px;padding:4px;font-size:12px;border:1px solid var(--border);border-radius:4px';
+  row.appendChild(inp);
+}
+
+$('#addInvestmentBtn').addEventListener('click', addInvestmentRow);
+$('#addBankBtn').addEventListener('click', addBankRow);
+$('#addCreditCardBtn').addEventListener('click', addCreditCardRow);
+$('#addChildBtn').addEventListener('click', addChildInput);
+
+// ============================================================
+// File upload
+// ============================================================
+$('#uploadBtn').addEventListener('click', async () => {
+  const fileInput = $('#fileInput');
+  const statusEl = $('#uploadStatus');
+
+  if (!fileInput.files.length) {
+    statusEl.innerHTML = '<span style="color:var(--danger);font-size:12px">Please select a file first.</span>';
+    return;
+  }
+
+  const files = Array.from(fileInput.files);
+  statusEl.innerHTML = '<span class="spinner"></span> <span style="font-size:12px">Uploading and analyzing ' + files.length + ' file(s)...</span>';
+
+  const previewsEl = $('#uploadedPreviews');
+
+  for (const file of files) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const resp = await fetch('/upload-smart', {method: 'POST', body: formData});
+      if (!resp.ok) {
+        const err = await resp.json();
+        statusEl.innerHTML = '<span style="color:var(--danger);font-size:12px">' + file.name + ': ' + (err.detail || 'Upload failed') + '</span>';
+        continue;
+      }
+      const data = await resp.json();
+
+      // Store parsed data by category
+      if (data.investments && data.investments.length) state.uploadedData.investments = data.investments;
+      if (data.bank_accounts && data.bank_accounts.length) state.uploadedData.banking = data.bank_accounts;
+      if (data.credit_cards && data.credit_cards.length) state.uploadedData.credit_cards = data.credit_cards;
+      if (data.spending && data.spending.length) state.uploadedData.spending = data.spending;
+
+      // Build summary of what was found
+      const found = [];
+      if (data.investments && data.investments.length) found.push(data.investments.length + ' investment(s)');
+      if (data.bank_accounts && data.bank_accounts.length) found.push(data.bank_accounts.length + ' bank account(s)');
+      if (data.credit_cards && data.credit_cards.length) found.push(data.credit_cards.length + ' credit card(s)');
+      if (data.spending && data.spending.length) found.push(data.spending.length + ' spending categor' + (data.spending.length === 1 ? 'y' : 'ies'));
+
+      statusEl.innerHTML = '<span style="color:var(--success);font-size:12px">✓ ' + file.name + ': ' + (found.join(', ') || 'no financial data found') + '</span>';
+
+      // Show preview
+      let preview = document.getElementById('preview-' + file.name);
+      if (!preview) {
+        preview = document.createElement('div');
+        preview.id = 'preview-' + file.name;
+        previewsEl.appendChild(preview);
+      }
+      preview.innerHTML = '<div style="font-size:11px;font-weight:600;margin-top:6px">' + file.name + ':</div><div class="uploaded-data">' + JSON.stringify(data, null, 2) + '</div>';
+    } catch (e) {
+      statusEl.innerHTML = '<span style="color:var(--danger);font-size:12px">' + file.name + ': ' + e.message + '</span>';
+    }
+  }
+
+  fileInput.value = '';
+});
+
+// Drag and drop
+const uploadSection = $('#uploadSection');
+uploadSection.addEventListener('dragover', (e) => { e.preventDefault(); uploadSection.style.borderColor = 'var(--primary)'; });
+uploadSection.addEventListener('dragleave', () => { uploadSection.style.borderColor = ''; });
+uploadSection.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadSection.style.borderColor = '';
+  if (e.dataTransfer.files.length) {
+    $('#fileInput').files = e.dataTransfer.files;
+  }
+});
+
+// ============================================================
+// SSE streaming helper
+// ============================================================
+function streamSSE(url, body, onChunk, onDone, onError) {
+  setStreaming(true);
+  const msgEl = startAgentMessage();
+
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  }).then(resp => {
+    if (!resp.ok) {
+      return resp.json().then(err => { throw new Error(err.detail || 'Request failed'); });
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function processLine(eventType, data) {
+      if (eventType === 'chunk') {
+        appendToAgent(msgEl, data.text || '');
+        if (onChunk) onChunk(data);
+      } else if (eventType === 'section') {
+        // Render section as rich HTML immediately
+        const thinking = msgEl.querySelector('.thinking-indicator');
+        if (thinking) {
+          thinking.remove();
+          if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
+        }
+        msgEl.style.whiteSpace = 'normal';
+        const sectionDiv = document.createElement('div');
+        sectionDiv.innerHTML = formatAgentText(data.text || '');
+        msgEl.appendChild(sectionDiv);
+        scrollToBottom();
+      } else if (eventType === 'done') {
+        if (data.assessment) {
+          msgEl.dataset.finalized = 'true';
+          if (_thinkingInterval) { clearInterval(_thinkingInterval); _thinkingInterval = null; }
+          const streamedText = _streamBuffer;
+          _streamBuffer = '';
+          _renderedUpTo = 0;
+
+          // Strip JSON code blocks from the streamed text
+          let cleanText = streamedText
+            .replace(/```json[\s\S]*?```/g, '')
+            .replace(/```[\s\S]*?```/g, '')
+            .trim();
+
+          if (cleanText && cleanText.length > 100) {
+            // Render the streamed markdown as rich HTML
+            msgEl.style.whiteSpace = 'normal';
+            msgEl.innerHTML = formatAgentText(cleanText);
+          } else {
+            // Short or no text — show the structured assessment card
+            msgEl.remove();
+            addRichAssessment(data.assessment);
+          }
+        } else {
+          finalizeAgent(msgEl);
+        }
+        if (onDone) onDone(data, msgEl);
+        setStreaming(false);
+      } else if (eventType === 'error') {
+        finalizeAgent(msgEl);
+        msgEl.className = 'msg error';
+        msgEl.textContent = 'Error: ' + (data.message || 'Unknown error');
+        if (onError) onError(data);
+        setStreaming(false);
+      }
+    }
+
+    function processBuffer() {
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      let currentEvent = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            processLine(currentEvent, data);
+          } catch (e) {}
+          currentEvent = '';
+        }
+      }
+    }
+
+    function read() {
+      reader.read().then(({done, value}) => {
+        if (done) {
+          if (buffer.trim()) processBuffer();
+          if (!msgEl.dataset.finalized) {
+            finalizeAgent(msgEl);
+            setStreaming(false);
+          }
+          return;
+        }
+        buffer += decoder.decode(value, {stream: true});
+        processBuffer();
+        read();
+      }).catch(err => {
+        finalizeAgent(msgEl);
+        msgEl.className = 'msg error';
+        msgEl.textContent = 'Stream error: ' + err.message;
+        setStreaming(false);
+      });
+    }
+    read();
+  }).catch(err => {
+    finalizeAgent(msgEl);
+    msgEl.className = 'msg error';
+    msgEl.textContent = 'Error: ' + err.message;
+    setStreaming(false);
+  });
+}
+
+// ============================================================
+// Assumption summary rendering
+// ============================================================
+function renderAssumptionSummaryHTML(summary) {
+  let html = '<div class="assumption-card">';
+  html += '<div class="card-header"><h3>Assumption Summary — Please Review</h3></div>';
+
+  if (summary.extracted_data) {
+    const ed = summary.extracted_data;
+    html += '<div class="section-title">Extracted Financial Data</div>';
+    html += '<table><tbody>';
+    if (ed.accounts_found != null) html += '<tr><td>Accounts Found</td><td>' + ed.accounts_found + '</td></tr>';
+    if (ed.total_investment_balance != null) html += '<tr><td>Total Investment Balance</td><td>' + formatCurrency(ed.total_investment_balance) + '</td></tr>';
+    if (ed.total_bank_balance != null) html += '<tr><td>Total Bank Balance</td><td>' + formatCurrency(ed.total_bank_balance) + '</td></tr>';
+    if (ed.total_credit_card_balance != null) html += '<tr><td>Total Credit Card Balance</td><td>' + formatCurrency(ed.total_credit_card_balance) + '</td></tr>';
+    if (ed.monthly_income != null) html += '<tr><td>Monthly Income</td><td>' + formatCurrency(ed.monthly_income) + '</td></tr>';
+    if (ed.monthly_expenses != null) html += '<tr><td>Monthly Expenses</td><td>' + formatCurrency(ed.monthly_expenses) + '</td></tr>';
+    const knownKeys = ['accounts_found','total_investment_balance','total_bank_balance','total_credit_card_balance','monthly_income','monthly_expenses'];
+    for (const [k, v] of Object.entries(ed)) {
+      if (!knownKeys.includes(k)) html += '<tr><td>' + escHTML(k.replace(/_/g, ' ')) + '</td><td>' + escHTML(String(v)) + '</td></tr>';
+    }
+    html += '</tbody></table>';
+  }
+
+  if (summary.assumptions) {
+    html += '<div class="section-title">Key Assumptions</div>';
+    html += '<table><tbody>';
+    const labels = {retirement_age:'Retirement Age',inflation_rate:'Inflation Rate',expected_investment_return:'Expected Investment Return',social_security_start_age:'Social Security Start Age',life_expectancy:'Life Expectancy'};
+    const pctKeys = ['inflation_rate','expected_investment_return'];
+    for (const [k, v] of Object.entries(summary.assumptions)) {
+      const label = labels[k] || k.replace(/_/g, ' ');
+      const display = pctKeys.includes(k) ? v + '%' : v;
+      html += '<tr><td>' + escHTML(label) + '</td><td>' + escHTML(String(display)) + '</td></tr>';
+    }
+    html += '</tbody></table>';
+  }
+
+  if (summary.file_interpretations) {
+    html += '<div class="section-title">File Interpretations</div>';
+    for (const [fname, interp] of Object.entries(summary.file_interpretations)) {
+      html += '<div style="font-weight:600;font-size:12px;margin:8px 0 4px">' + escHTML(fname) + '</div>';
+      if (typeof interp === 'object') {
+        html += '<table><tbody>';
+        for (const [ik, iv] of Object.entries(interp)) {
+          html += '<tr><td>' + escHTML(ik.replace(/_/g, ' ')) + '</td><td>' + escHTML(String(iv)) + '</td></tr>';
+        }
+        html += '</tbody></table>';
+      } else {
+        html += '<div style="padding:4px 8px;font-size:13px">' + escHTML(String(interp)) + '</div>';
+      }
+    }
+  }
+
+  if (summary.missing_data_questions && summary.missing_data_questions.length) {
+    html += '<div class="section-title" style="color:var(--primary)">Additional Information Needed</div>';
+    html += '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">The following information was not found in your uploaded data. Answering these will improve the accuracy of your assessment.</div>';
+    for (let i = 0; i < summary.missing_data_questions.length; i++) {
+      const q = summary.missing_data_questions[i];
+      html += '<div style="display:flex;gap:8px;padding:6px 0;font-size:13px;border-bottom:1px solid var(--border)">';
+      html += '<span style="color:var(--primary);font-weight:700;flex-shrink:0">' + (i+1) + '.</span>';
+      html += '<span>' + escHTML(q) + '</span>';
+      html += '</div>';
+    }
+  }
+
+  html += '</div>';
+  return html;
+}
+function addAssumptionConfirmation(summary, profile, personalInfo) {
+  // Remove welcome message if present
+  const welcome = chatThread.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+
+  // Render the summary as rich HTML
+  const summaryDiv = document.createElement('div');
+  summaryDiv.className = 'msg agent';
+  summaryDiv.style.whiteSpace = 'normal';
+  summaryDiv.innerHTML = renderAssumptionSummaryHTML(summary);
+  chatThread.appendChild(summaryDiv);
+
+  // Create the confirmation controls container
+  const controlsDiv = document.createElement('div');
+  controlsDiv.className = 'msg system';
+  controlsDiv.style.cssText = 'max-width:90%;display:flex;flex-direction:column;gap:8px;padding:12px 16px;align-self:center';
+
+  const label = document.createElement('div');
+  label.style.cssText = 'font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px';
+  label.textContent = 'Review the assumptions above. Confirm to proceed, provide corrections, or answer the questions.';
+  controlsDiv.appendChild(label);
+
+  // Additional info text area (for answering missing data questions)
+  if (summary.missing_data_questions && summary.missing_data_questions.length) {
+    const infoLabel = document.createElement('div');
+    infoLabel.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:4px';
+    infoLabel.textContent = 'Answer any of the questions above (or skip to use defaults):';
+    controlsDiv.appendChild(infoLabel);
+
+    const infoArea = document.createElement('textarea');
+    infoArea.id = 'missingDataAnswers';
+    infoArea.rows = 3;
+    infoArea.placeholder = 'e.g. We own a home worth $850K with $320K mortgage at $2,400/mo. No car loans. 529 accounts total $45K.';
+    infoArea.style.cssText = 'padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;width:100%;resize:vertical;font-family:inherit';
+    controlsDiv.appendChild(infoArea);
+  }
+
+  const correctionInput = document.createElement('input');
+  correctionInput.type = 'text';
+  correctionInput.placeholder = 'Assumption corrections: e.g. inflation_rate=2.5, retirement_age=67';
+  correctionInput.style.cssText = 'padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;width:100%';
+  controlsDiv.appendChild(correctionInput);
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'btn-primary';
+  confirmBtn.style.cssText = 'padding:8px 20px;font-size:13px';
+  confirmBtn.textContent = 'Confirm';
+
+  const correctBtn = document.createElement('button');
+  correctBtn.className = 'btn-sm';
+  correctBtn.style.cssText = 'padding:8px 20px;font-size:13px;border:1px solid var(--primary);color:var(--primary)';
+  correctBtn.textContent = 'Correct';
+
+  btnRow.appendChild(confirmBtn);
+  btnRow.appendChild(correctBtn);
+  controlsDiv.appendChild(btnRow);
+  chatThread.appendChild(controlsDiv);
+  scrollToBottom();
+
+  // Confirm: POST to /confirm-assumptions with optional additional info
+  confirmBtn.addEventListener('click', () => {
+    // Capture any additional info answers
+    const infoArea = document.getElementById('missingDataAnswers');
+    const additionalInfo = infoArea ? infoArea.value.trim() : '';
+    if (additionalInfo) {
+      summary.additional_context = additionalInfo;
+    }
+    controlsDiv.remove();
+    const msg = additionalInfo
+      ? 'Confirmed assumptions with additional info: ' + additionalInfo.slice(0, 100) + (additionalInfo.length > 100 ? '...' : '')
+      : 'Confirmed assumptions. Running assessment...';
+    addMessage(msg, 'user');
+    runConfirmAssessment(profile, personalInfo, summary, null);
+  });
+
+  // Correct: parse corrections and re-POST to /assumptions
+  correctBtn.addEventListener('click', () => {
+    const raw = correctionInput.value.trim();
+    if (!raw) {
+      correctionInput.style.borderColor = 'var(--danger)';
+      return;
+    }
+    correctionInput.style.borderColor = '';
+
+    // Parse corrections like "inflation_rate=2.5, retirement_age=67"
+    const corrections = {};
+    const parts = raw.split(',');
+    for (const part of parts) {
+      const eqIdx = part.indexOf('=');
+      if (eqIdx > 0) {
+        const key = part.slice(0, eqIdx).trim();
+        let val = part.slice(eqIdx + 1).trim();
+        // Try to parse as number
+        const num = Number(val);
+        if (!isNaN(num) && val !== '') val = num;
+        corrections[key] = val;
+      }
+    }
+
+    controlsDiv.remove();
+    addMessage('Corrections: ' + raw, 'user');
+    addMessage('Re-generating assumptions with corrections...', 'system');
+
+    // Re-POST to /assumptions — the server will re-generate
+    fetchAssumptions(profile, personalInfo, corrections);
+  });
+}
+
+// ============================================================
+// Assumption flow helpers
+// ============================================================
+async function fetchAssumptions(profile, personalInfo, pendingCorrections) {
+  setStreaming(true);
+  try {
+    const body = {profile, personal_info: personalInfo};
+    const resp = await fetch('/assumptions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      addMessage('Error: ' + (err.detail || 'Failed to generate assumptions'), 'error');
+      setStreaming(false);
+      return;
+    }
+    const summary = await resp.json();
+
+    // If there were pending corrections from a "Correct" click, apply them locally
+    // and show the updated summary
+    if (pendingCorrections) {
+      const assumptions = summary.assumptions || {};
+      Object.assign(assumptions, pendingCorrections);
+      summary.assumptions = assumptions;
+    }
+
+    setStreaming(false);
+    addAssumptionConfirmation(summary, profile, personalInfo);
+  } catch (e) {
+    addMessage('Error: ' + e.message, 'error');
+    setStreaming(false);
+  }
+}
+
+function runConfirmAssessment(profile, personalInfo, summary, corrections) {
+  const body = {profile, personal_info: personalInfo, summary};
+  if (corrections) body.corrections = corrections;
+
+  streamSSE('/confirm-assumptions', body,
+    null,
+    (data) => {
+      if (data.session_id) {
+        state.sessionId = data.session_id;
+        followUpInput.disabled = false;
+        followUpBtn.disabled = false;
+      }
+      setStreaming(false);
+      loadSessions();
+    },
+    () => { setStreaming(false); }
+  );
+}
+
+// ============================================================
+// Run Assessment (two-step: assumptions first, then confirm)
+// ============================================================
+$('#submitAssessment').addEventListener('click', () => {
+  clearErrors();
+
+  const husbandDob = validateAge('husbandDob', "Husband's date of birth");
+  const wifeDob = validateAge('wifeDob', "Wife's date of birth");
+  const childrenDobs = getChildrenAges();
+
+  if (husbandDob === null || wifeDob === null) return;
+
+  const profile = buildProfile();
+  const personal_info = {
+    husband_birthdate: husbandDob,
+    wife_birthdate: wifeDob,
+    children_birthdates: childrenDobs,
+  };
+
+  // Show user message
+  addMessage('Running retirement assessment...', 'user');
+
+  // Collapse input panel after submission
+  inputPanel.classList.add('hidden');
+
+  // Step 1: Fetch assumptions for review
+  fetchAssumptions(profile, personal_info, null);
+});
+
+// ============================================================
+// Follow-up questions
+// ============================================================
+function sendFollowUp() {
+  const q = followUpInput.value.trim();
+  if (!q || !state.sessionId || state.streaming) return;
+
+  addMessage(q, 'user');
+  followUpInput.value = '';
+
+  streamSSE('/followup', {session_id: state.sessionId, question: q},
+    null,
+    (data) => {
+      setStreaming(false);
+    },
+    () => { setStreaming(false); }
+  );
+}
+
+followUpBtn.addEventListener('click', sendFollowUp);
+followUpInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendFollowUp(); }
+});
+
+// Suggestion chip click handler (delegated)
+chatThread.addEventListener('click', (e) => {
+  const chip = e.target.closest('.suggestion-chip');
+  if (!chip) return;
+  if (!state.sessionId || state.streaming) return;
+  const question = chip.getAttribute('data-question');
+  if (!question) return;
+  // Remove all suggestion chips from the message
+  const chipsContainer = chip.closest('.suggestion-chips');
+  if (chipsContainer) chipsContainer.remove();
+  // Send as follow-up
+  followUpInput.value = question;
+  sendFollowUp();
+});
+
+// ============================================================
+// Chat file upload
+// ============================================================
+const chatFileBtn = $('#chatFileBtn');
+const chatFileInput = $('#chatFileInput');
+
+chatFileBtn.addEventListener('click', () => chatFileInput.click());
+
+chatFileInput.addEventListener('change', async () => {
+  if (!chatFileInput.files.length || !state.sessionId || state.streaming) return;
+
+  const files = Array.from(chatFileInput.files);
+  addMessage('Uploading ' + files.length + ' file(s): ' + files.map(f => f.name).join(', '), 'user');
+
+  setStreaming(true);
+
+  // Upload and parse each file via smart endpoint (handles PDFs, auto-detects categories)
+  const allParsed = [];
+  for (const file of files) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const resp = await fetch('/upload-smart', {method: 'POST', body: formData});
+      if (!resp.ok) {
+        const err = await resp.json();
+        addMessage('Error parsing ' + file.name + ': ' + (err.detail || 'Failed'), 'error');
+        continue;
+      }
+      const data = await resp.json();
+      const totalAccounts = (data.investments || []).length + (data.bank_accounts || []).length + (data.credit_cards || []).length + (data.spending || []).length;
+      allParsed.push({filename: file.name, accounts: totalAccounts, data: data});
+    } catch (e) {
+      addMessage('Error uploading ' + file.name + ': ' + e.message, 'error');
+    }
+  }
+
+  if (!allParsed.length) {
+    setStreaming(false);
+    chatFileInput.value = '';
+    return;
+  }
+
+  // Build a compact summary for the agent (avoid context overflow)
+  let summaryParts = [];
+  for (const p of allParsed) {
+    const d = p.data;
+    const parts = [];
+    if (d.investments && d.investments.length) {
+      parts.push(d.investments.length + ' investment(s): ' + d.investments.map(i => i.account_type + ' $' + (i.balance || 0).toLocaleString()).join(', '));
+    }
+    if (d.bank_accounts && d.bank_accounts.length) {
+      parts.push(d.bank_accounts.length + ' bank account(s): ' + d.bank_accounts.map(b => b.account_type + ' $' + (b.balance || 0).toLocaleString()).join(', '));
+    }
+    if (d.credit_cards && d.credit_cards.length) {
+      parts.push(d.credit_cards.length + ' credit card(s): balances ' + d.credit_cards.map(c => '$' + (c.outstanding_balance || 0).toLocaleString()).join(', '));
+    }
+    if (d.spending && d.spending.length) {
+      const total = d.spending.reduce((s, i) => s + (i.monthly_amount || 0), 0);
+      parts.push(d.spending.length + ' spending categor' + (d.spending.length === 1 ? 'y' : 'ies') + ': $' + total.toLocaleString() + '/mo');
+    }
+    summaryParts.push(p.filename + ' (' + p.accounts + ' accounts): ' + (parts.join('; ') || 'no financial data found'));
+  }
+
+  const question = 'I uploaded new financial data. Here is a summary of what was parsed:\n' +
+    summaryParts.join('\n') +
+    '\nPlease incorporate this data into my retirement plan and update the assessment.';
+
+  streamSSE('/followup', {session_id: state.sessionId, question: question},
+    null,
+    (doneData) => { setStreaming(false); },
+    () => { setStreaming(false); }
+  );
+
+  chatFileInput.value = '';
+});
+
+// ============================================================
+// Session management
+// ============================================================
+async function loadSessions() {
+  try {
+    const resp = await fetch('/sessions');
+    const sessions = await resp.json();
+    if (!sessions.length) {
+      sessionListEl.innerHTML = '<div class="no-sessions">No previous sessions</div>';
+      return;
+    }
+    sessionListEl.innerHTML = '';
+    for (const s of sessions) {
+      const div = document.createElement('div');
+      div.className = 'session-item' + (s.session_id === state.sessionId ? ' active' : '');
+      const dateStr = s.session_id ? s.session_id.replace(/_/g, ' ').slice(0, 13) : 'Session';
+      div.innerHTML = '<div class="session-date">' + dateStr + '</div><div>' + (s.summary || 'Retirement Assessment') + '</div>';
+      div.addEventListener('click', () => loadSession(s.session_id));
+      sessionListEl.appendChild(div);
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function loadSession(sessionId) {
+  try {
+    const resp = await fetch('/sessions/' + sessionId);
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    state.sessionId = sessionId;
+    inputPanel.classList.add('hidden');
+
+    // Clear chat and render session
+    chatThread.innerHTML = '';
+
+    // Show assessment
+    if (data.assessment) {
+      addRichAssessment(data.assessment);
+    }
+
+    // Show conversation history
+    if (data.conversation) {
+      for (const exchange of data.conversation) {
+        addMessage(exchange.question, 'user');
+        if (typeof exchange.response === 'string') {
+          addMessage(exchange.response, 'agent');
+        } else if (exchange.response) {
+          addRichAssessment(exchange.response);
+        }
+      }
+    }
+
+    followUpInput.disabled = false;
+    followUpBtn.disabled = false;
+
+    // Update active state in sidebar
+    document.querySelectorAll('.session-item').forEach(el => el.classList.remove('active'));
+    // The session list will be refreshed, so we just mark the current one
+    loadSessions();
+  } catch (e) { /* ignore */ }
+}
+
+// Load sessions on startup
+loadSessions();
+</script>
+</body>
+</html>

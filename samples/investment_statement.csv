@@ -1,0 +1,16 @@
+Account,Account Type,Symbol/Fund,Description,Shares,Price,Market Value,Cost Basis,Unrealized Gain/Loss
+Fidelity 401(k) ****2150,401k,FXAIX,Fidelity 500 Index Fund,1245.320,289.50,360522.60,198750.00,161772.60
+Fidelity 401(k) ****2150,401k,FSPSX,Fidelity Intl Index Fund,2180.450,48.75,106297.00,95400.00,10897.00
+Fidelity 401(k) ****2150,401k,FXNAX,Fidelity US Bond Index Fund,5420.100,10.25,55556.00,58200.00,-2644.00
+Fidelity 401(k) ****2150,401k,FIKFX,Fidelity Freedom 2040 Fund,8950.000,28.40,254180.00,215000.00,39180.00
+Fidelity 401(k) ****2150,401k,MSFT,Microsoft Corp (ESPP),215.000,345.20,74218.00,52000.00,22218.00
+Vanguard IRA ****8734,IRA,VTSAX,Vanguard Total Stock Market Index,1420.680,128.50,182577.40,112500.00,70077.40
+Vanguard IRA ****8734,IRA,VXUS,Vanguard Total Intl Stock ETF,1285.500,58.90,75715.95,68400.00,7315.95
+Vanguard IRA ****8734,IRA,BND,Vanguard Total Bond Market ETF,850.200,72.60,61704.52,64800.00,-3095.48
+Schwab Taxable ****5567,brokerage,AAPL,Apple Inc,320.000,242.80,77696.00,48000.00,29696.00
+Schwab Taxable ****5567,brokerage,MSFT,Microsoft Corp,185.000,345.20,63862.00,38500.00,25362.00
+Schwab Taxable ****5567,brokerage,GOOGL,Alphabet Inc Class A,410.000,178.50,73185.00,52000.00,21185.00
+Schwab Taxable ****5567,brokerage,VOO,Vanguard S&P 500 ETF,340.000,532.40,181016.00,138500.00,42516.00
+Schwab Taxable ****5567,brokerage,QQQ,Invesco QQQ Trust,105.000,498.60,52353.00,40500.00,11853.00
+Schwab Taxable ****5567,brokerage,MUB,iShares National Muni Bond ETF,250.000,108.20,27050.00,26500.00,550.00
+HSA ****9201,HSA,VFIAX,Vanguard 500 Index Fund Admiral,95.800,470.10,45043.58,32000.00,13043.58

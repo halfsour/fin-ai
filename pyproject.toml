@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retirement-planner"
+version = "0.1.0"
+description = "A CLI retirement planning tool powered by Strands Agents and Amazon Bedrock"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "strands-agents>=0.1.0",
+    "strands-agents-builder>=0.1.0",
+    "boto3>=1.28",
+    "pymupdf>=1.24",
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.23",
+    "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "hypothesis>=6.0",
+    "pytest>=7.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
