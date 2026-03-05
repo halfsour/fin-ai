@@ -33,9 +33,25 @@ from retirement_planner.models import (
     CredentialError,
     FileParseError,
     FinancialProfile,
+    MonthlySpending,
     NormalizationError,
     PersonalInfo,
 )
+
+
+def _aggregate_spending(spending: list[MonthlySpending]) -> list[dict]:
+    """Aggregate raw monthly spending entries into average monthly amounts per category."""
+    if not spending:
+        return []
+    from collections import defaultdict
+    totals: dict[str, list[float, int]] = defaultdict(lambda: [0.0, 0])
+    for item in spending:
+        totals[item.category][0] += item.monthly_amount
+        totals[item.category][1] += 1
+    return [
+        {"category": cat, "monthly_amount": round(total / count, 2)}
+        for cat, (total, count) in sorted(totals.items())
+    ]
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -71,6 +87,7 @@ class AssumptionSummaryRequest(BaseModel):
     profile: FinancialProfile
     personal_info: PersonalInfo
     file_sources: dict[str, str] | None = None
+    model_id: str | None = None
 
 
 class ConfirmAssumptionsRequest(BaseModel):
@@ -79,6 +96,7 @@ class ConfirmAssumptionsRequest(BaseModel):
     personal_info: PersonalInfo
     summary: dict[str, Any]
     corrections: dict[str, Any] | None = None
+    model_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +227,7 @@ async def upload_file(file: UploadFile = File(...), category: str = Form(...)):
 
     # Normalize via agent
     try:
-        agent = create_agent()
+        agent = create_agent(task="extraction")
         validated = normalize_file_data(agent, raw_content, category)
     except (FileParseError, NormalizationError) as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -220,7 +238,7 @@ async def upload_file(file: UploadFile = File(...), category: str = Form(...)):
 
 
 @app.post("/upload-smart")
-async def upload_file_smart(file: UploadFile = File(...)):
+async def upload_file_smart(file: UploadFile = File(...), model_id: str | None = Form(None)):
     """Upload a file and auto-detect all financial data categories.
 
     Handles text files (CSV, JSON, plain text) and PDFs (including
@@ -245,8 +263,8 @@ async def upload_file_smart(file: UploadFile = File(...)):
 
     try:
         loop = asyncio.get_event_loop()
-        agent = create_agent()
-        print(f"[upload-smart] Processing {file.filename} from {tmp_path}")
+        agent = create_agent(task="extraction")
+        print(f"[upload-smart] Processing {file.filename} with model_id={model_id}")
         profile = await loop.run_in_executor(None, _parse_all_from_file, agent, tmp_path)
         print(f"[upload-smart] Result: {len(profile.investments)} investments, {len(profile.bank_accounts)} bank accounts, {len(profile.credit_cards)} credit cards")
 
@@ -268,7 +286,7 @@ async def upload_file_smart(file: UploadFile = File(...)):
             "investments": [item.model_dump() for item in profile.investments],
             "bank_accounts": [item.model_dump() for item in profile.bank_accounts],
             "credit_cards": [item.model_dump() for item in profile.credit_cards],
-            "spending": [item.model_dump() for item in profile.spending],
+            "spending": _aggregate_spending(profile.spending),
         }
         return JSONResponse(content=result)
     except HTTPException:
@@ -298,7 +316,7 @@ async def run_assessment(request: AssessRequest):
 
     async def _stream():
         try:
-            agent = create_agent()
+            agent = create_agent(task="assessment")
             session_id = history.new_session_id()
 
             # Run the assessment in a thread to avoid blocking the event loop
@@ -358,7 +376,7 @@ async def get_assumptions(request: AssumptionSummaryRequest):
     assumptions before confirming.
     """
     try:
-        agent = create_agent()
+        agent = create_agent(task="assumptions")
         loop = asyncio.get_event_loop()
         summary = await loop.run_in_executor(
             None,
@@ -374,8 +392,6 @@ async def get_assumptions(request: AssumptionSummaryRequest):
         raise HTTPException(status_code=500, detail=f"Failed to generate assumptions: {exc}")
 
     return JSONResponse(content=summary)
-
-
 @app.post("/confirm-assumptions")
 async def confirm_assumptions(request: ConfirmAssumptionsRequest):
     """Confirm assumptions (with optional corrections) and run the assessment.
@@ -395,7 +411,7 @@ async def confirm_assumptions(request: ConfirmAssumptionsRequest):
                 assumptions.update(request.corrections)
                 summary["assumptions"] = assumptions
 
-            agent = create_agent()
+            agent = create_agent(model_id=request.model_id, task="assessment")
             session_id = history.new_session_id()
 
             # Extract additional context from the summary (user's answers to missing data questions)
@@ -406,16 +422,21 @@ async def confirm_assumptions(request: ConfirmAssumptionsRequest):
                 None, run_initial_assessment, agent, request.profile, request.personal_info, additional_context
             )
 
-            # Stream the assessment summary in chunks
-            summary_text = assessment.retirement_readiness_summary
+            # Stream the full agent response (includes analysis and suggested followups)
+            # Strip JSON blocks since the structured assessment is sent in the done event
+            raw_text = getattr(assessment, '_raw_response', '') or assessment.retirement_readiness_summary
+            import re as _re
+            stream_text = _re.sub(r'```json[\s\S]*?```', '', raw_text)
+            stream_text = _re.sub(r'```[\s\S]*?```', '', stream_text).strip()
+
             pos = 0
-            while pos < len(summary_text):
-                end = min(pos + 200, len(summary_text))
-                if end < len(summary_text):
-                    nl = summary_text.rfind('\n', pos, end + 50)
+            while pos < len(stream_text):
+                end = min(pos + 200, len(stream_text))
+                if end < len(stream_text):
+                    nl = stream_text.rfind('\n', pos, end + 50)
                     if nl > pos:
                         end = nl + 1
-                yield _sse_event("chunk", {"text": summary_text[pos:end]})
+                yield _sse_event("chunk", {"text": stream_text[pos:end]})
                 pos = end
                 await asyncio.sleep(0.05)
 
@@ -475,14 +496,53 @@ async def follow_up(request: FollowUpRequest):
 
     agent = _active_sessions[request.session_id]
 
+    # Inject relevant profile context based on the question
+    context_hint = ""
+    try:
+        session_data = history.load_session(request.session_id)
+        profile = session_data.get("profile", {})
+        q = request.question.lower()
+
+        if any(w in q for w in ('ticker', 'holding', 'fund', 'stock', 'etf', 'bond', 'invest', 'return', 'allocation', 'portfolio', '401k', '401(k)', 'ira', 'brokerage', 'roth')):
+            inv = profile.get("investments", [])
+            if inv:
+                lines = [f"- {a['account_type']}: ${a['balance']:,.0f} [{a.get('holdings','')}] @{a.get('expected_annual_return',0):.0%}" for a in inv]
+                context_hint = "\n\n[Investment data from profile:\n" + "\n".join(lines) + "]\n"
+
+        elif any(w in q for w in ('spend', 'budget', 'expense', 'cost', 'category', 'cut', 'reduce', 'save')):
+            spending = profile.get("spending", [])
+            if spending:
+                lines = [f"- {s['category']}: ${s['monthly_amount']:,.0f}/mo" for s in spending]
+                context_hint = "\n\n[Spending data from profile:\n" + "\n".join(lines) + "]\n"
+
+        elif any(w in q for w in ('income', 'deposit', 'salary', 'bank', 'checking', 'saving', 'cash flow')):
+            banks = profile.get("bank_accounts", [])
+            if banks:
+                # Deduplicate and summarize
+                seen = {}
+                for b in banks:
+                    key = b['account_type']
+                    if key not in seen:
+                        seen[key] = {'balance': b['balance'], 'income': b['monthly_income_deposits']}
+                    else:
+                        seen[key]['income'] += b['monthly_income_deposits']
+                lines = [f"- {k}: balance ${v['balance']:,.0f}, monthly income ${v['income']:,.0f}" for k, v in seen.items() if v['income'] > 0]
+                if lines:
+                    context_hint = "\n\n[Bank account data from profile:\n" + "\n".join(lines) + "]\n"
+    except Exception:
+        pass
+
     async def _stream():
         try:
             full_text = ""
-            async for event in stream_follow_up(agent, request.question):
+            chunk_count = 0
+            async for event in stream_follow_up(agent, request.question + context_hint):
                 if "text" in event:
+                    chunk_count += 1
                     yield _sse_event("chunk", {"text": event["text"]})
                 elif event.get("done"):
                     full_text = event.get("full_text", "")
+                    print(f"[followup] Streamed {chunk_count} chunks, {len(full_text)} chars total")
 
             # Try to parse as assessment
             result: Any = full_text

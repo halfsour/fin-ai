@@ -11,9 +11,22 @@ from retirement_planner.models import FinancialProfile, RetirementAssessment
 def serialize_profile(profile: FinancialProfile) -> str:
     """Serialize FinancialProfile to JSON string.
 
-    Uses Pydantic's built-in model_dump_json() for reliable serialization.
+    Aggregates spending data by category (average monthly amount) to reduce
+    token usage instead of sending every raw monthly line item.
     """
-    return profile.model_dump_json()
+    data = profile.model_dump()
+    if data.get("spending"):
+        from collections import defaultdict
+        totals = defaultdict(lambda: [0.0, 0])
+        for item in data["spending"]:
+            cat = item["category"]
+            totals[cat][0] += item["monthly_amount"]
+            totals[cat][1] += 1
+        data["spending"] = [
+            {"category": cat, "monthly_amount": round(total / count, 2)}
+            for cat, (total, count) in sorted(totals.items())
+        ]
+    return json.dumps(data)
 
 
 def deserialize_profile(json_str: str) -> FinancialProfile:
@@ -59,5 +72,6 @@ def parse_assessment_response(response: str) -> RetirementAssessment:
             continue
 
     raise ValueError(
-        "Could not parse a valid RetirementAssessment from the agent response."
+        "Could not parse a valid RetirementAssessment from the agent response. "
+        f"Response preview (first 500 chars): {response[:500]}"
     )

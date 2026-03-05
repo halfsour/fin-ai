@@ -132,7 +132,7 @@ class TestCreateAgent:
             agent_mod.create_agent()
 
         mock_bedrock_model_cls.assert_called_once_with(
-            model_id="us.anthropic.claude-sonnet-4-6",
+            model_id="moonshotai.kimi-k2.5",
             region_name="us-east-1",
         )
         mock_agent_cls.assert_called_once()
@@ -159,7 +159,7 @@ class TestCreateAgent:
         call_kwargs = mock_agent_cls.call_args
         tools = call_kwargs.kwargs.get("tools") or call_kwargs[1].get("tools")
         assert tools is not None
-        assert len(tools) == 7
+        assert len(tools) == 8
 
     def test_sets_system_prompt(self):
         mock_bedrock_model_cls = MagicMock()
@@ -255,10 +255,8 @@ class TestRunInitialAssessment:
         run_initial_assessment(mock_agent, sample_profile, sample_personal_info)
 
         call_args = mock_agent.call_args[0][0]
-        assert "Financial Profile" in call_args
-        assert "Personal Information" in call_args
-        assert "55" in call_args  # husband_age
-        assert "52" in call_args  # wife_age
+        assert "PRE-COMPUTED FINANCIAL ANALYSIS" in call_args
+        assert "NET WORTH" in call_args
 
     def test_raises_credential_error_on_no_credentials(self, sample_profile, sample_personal_info):
         from botocore.exceptions import NoCredentialsError

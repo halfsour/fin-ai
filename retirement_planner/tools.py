@@ -676,3 +676,33 @@ def get_treasury_yields(year: int = 2025) -> dict:
     except Exception as exc:
         return {"error": f"Failed to get Treasury yield data: {exc}"}
 
+
+
+@tool
+def search_web(query: str) -> str:
+    """Search the web for current financial data, tax rules, market information, or any other topic.
+
+    Use this when built-in tools (lookup_tax_data, get_inflation_data, get_treasury_yields)
+    don't have the needed data. Returns top results with titles and snippets.
+
+    Args:
+        query: The search query string.
+
+    Returns:
+        A string with the top search results including titles, URLs, and snippets.
+    """
+    try:
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+        if not results:
+            return f"No results found for: {query}"
+        lines = []
+        for r in results:
+            lines.append(f"**{r.get('title', '')}**")
+            lines.append(f"  {r.get('href', '')}")
+            lines.append(f"  {r.get('body', '')}")
+            lines.append("")
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"Web search failed: {exc}. Please proceed with available data."

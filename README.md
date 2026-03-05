@@ -1,13 +1,13 @@
 # Retirement Planner
 
-An AI-powered retirement planning tool that analyzes your financial data and produces a retirement readiness assessment. Uses a Strands Agent with CPA/CFA expertise powered by Claude on Amazon Bedrock.
+An AI-powered retirement planning tool that analyzes your financial data and produces a retirement readiness assessment. Uses a Strands Agent with CPA/CFA expertise powered by multi-model routing (Claude Haiku 4.5 for analysis) on Amazon Bedrock.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.13+ (or Docker)
-- AWS credentials with Amazon Bedrock access (Claude Opus 4.6)
+- AWS credentials with Amazon Bedrock access
 - Credentials via environment variables, AWS profile, or `~/.aws/credentials`
 
 ### Option 1: Docker (Recommended)
@@ -52,6 +52,17 @@ The web interface provides:
 3. Confirm or correct assumptions, then run the assessment
 4. Get a retirement readiness assessment with a recommended monthly budget
 5. Ask follow-up questions to explore scenarios ("What if I retire at 67?")
+
+## Architecture
+
+The app uses a cost-optimized multi-model architecture:
+- **File parsing**: Direct CSV/OFX parsing for standard formats (zero LLM cost), Nova Lite fallback for PDFs/unknown formats
+- **Financial calculations**: Net worth, cash flow, withdrawal rates, milestone dates computed in Python
+- **Assessment**: Pre-computed analysis brief sent to Claude Haiku 4.5 for narrative generation
+- **Follow-ups**: Haiku 4.5 with context-aware data injection
+- **Web search**: DuckDuckGo integration for current market data and tax rules
+
+Model selection is configurable via `--model` CLI flag, `RETIREMENT_PLANNER_MODEL` env var, or the UI dropdown.
 
 ## CLI (Alternative)
 

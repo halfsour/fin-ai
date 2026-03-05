@@ -186,6 +186,7 @@ input,select,textarea{font:inherit}
       <div class="upload-section" id="uploadSection">
         <label for="fileInput">Choose a file</label> or drag &amp; drop
         <input type="file" id="fileInput" multiple>
+        <div id="fileQueue" style="margin-top:8px;font-size:12px;color:var(--muted);max-height:150px;overflow-y:auto"></div>
         <div class="upload-row">
           <button class="btn-sm" id="uploadBtn" type="button">Upload</button>
         </div>
@@ -211,6 +212,21 @@ input,select,textarea{font:inherit}
         <label>Children's Dates of Birth</label>
         <div class="children-row" id="childrenRow"></div>
         <button class="btn-sm" id="addChildBtn" type="button">+ Add Child</button>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
+
+      <!-- Model selection -->
+      <h3>AI Model</h3>
+      <div class="form-group">
+        <label for="modelSelect">Model</label>
+        <select id="modelSelect" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
+          <option value="sonnet">Claude Sonnet 4.6</option>
+          <option value="opus">Claude Opus 4.6</option>
+          <option value="kimi" selected>Kimi K2.5 (default)</option>
+          <option value="llama4-maverick">Llama 4 Maverick</option>
+          <option value="llama4-scout">Llama 4 Scout</option>
+        </select>
       </div>
 
       <hr style="border:none;border-top:1px solid var(--border);margin:8px 0">
@@ -250,6 +266,13 @@ input,select,textarea{font:inherit}
       <div class="input-bar" id="inputBar">
         <input type="file" id="chatFileInput" multiple style="display:none">
         <button id="chatFileBtn" title="Upload a file" disabled style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);font-size:16px;color:var(--muted);transition:all .15s">📎</button>
+        <select id="chatModelSelect" style="padding:8px 6px;border:1px solid var(--border);border-radius:var(--radius);font-size:12px;color:var(--muted);background:var(--surface);max-width:140px">
+          <option value="sonnet">Sonnet 4.6</option>
+          <option value="opus">Opus 4.6</option>
+          <option value="kimi" selected>Kimi K2.5</option>
+          <option value="llama4-maverick">Llama 4 Maverick</option>
+          <option value="llama4-scout">Llama 4 Scout</option>
+        </select>
         <input type="text" id="followUpInput" placeholder="Ask a follow-up question..." disabled>
         <button id="followUpBtn" disabled>Send</button>
       </div>
@@ -264,8 +287,12 @@ input,select,textarea{font:inherit}
 const state = {
   sessionId: null,
   streaming: false,
-  uploadedData: {investments: null, banking: null, credit_cards: null, spending: null},
+  uploadedData: JSON.parse(sessionStorage.getItem('uploadedData') || 'null') || {investments: null, banking: null, credit_cards: null, spending: null},
 };
+
+function saveUploadedData() {
+  sessionStorage.setItem('uploadedData', JSON.stringify(state.uploadedData));
+}
 
 // ============================================================
 // DOM refs
@@ -325,8 +352,15 @@ function formatAgentText(text) {
       const sugSection = text.slice(idx + marker.length);
       const sugLines = sugSection.split('\n');
       for (const sl of sugLines) {
-        const m = sl.trim().match(/^[-•*]\s*(.+)/);
-        if (m && m[1].trim()) suggestions.push(m[1].trim());
+        const trimmed = sl.trim();
+        if (!trimmed) continue;
+        // Match bulleted lines or plain question lines
+        const m = trimmed.match(/^[-•*]\s*(.+)/);
+        if (m && m[1].trim()) {
+          suggestions.push(m[1].trim());
+        } else if (trimmed.endsWith('?') && trimmed.length > 10) {
+          suggestions.push(trimmed);
+        }
       }
       break;
     }
@@ -927,28 +961,49 @@ $('#addChildBtn').addEventListener('click', addChildInput);
 // File upload
 // ============================================================
 $('#uploadBtn').addEventListener('click', async () => {
-  const fileInput = $('#fileInput');
   const statusEl = $('#uploadStatus');
 
-  if (!fileInput.files.length) {
+  if (!state.queuedFiles || state.queuedFiles.length === 0) {
     statusEl.innerHTML = '<span style="color:var(--danger);font-size:12px">Please select a file first.</span>';
     return;
   }
 
-  const files = Array.from(fileInput.files);
-  statusEl.innerHTML = '<span class="spinner"></span> <span style="font-size:12px">Uploading and analyzing ' + files.length + ' file(s)...</span>';
+  const files = state.queuedFiles;
+  
+  // Disable submit button during upload
+  setStreaming(true);
+  
+  // Create file queue status display
+  statusEl.innerHTML = '<div style="font-size:12px;font-weight:600;margin-bottom:6px">Uploading ' + files.length + ' file(s)...</div>';
+  const queueList = document.createElement('div');
+  queueList.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-bottom:8px';
+  
+  for (const file of files) {
+    const fileItem = document.createElement('div');
+    fileItem.id = 'upload-item-' + file.name.replace(/[^a-zA-Z0-9]/g, '_');
+    fileItem.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:12px';
+    fileItem.innerHTML = '<span class="spinner" style="width:12px;height:12px"></span><span style="color:var(--muted)">' + file.name + '</span>';
+    queueList.appendChild(fileItem);
+  }
+  
+  statusEl.appendChild(queueList);
 
   const previewsEl = $('#uploadedPreviews');
+  const modelId = document.getElementById('modelSelect').value;
 
   for (const file of files) {
+    const fileItem = document.getElementById('upload-item-' + file.name.replace(/[^a-zA-Z0-9]/g, '_'));
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('model_id', modelId);
 
     try {
       const resp = await fetch('/upload-smart', {method: 'POST', body: formData});
       if (!resp.ok) {
         const err = await resp.json();
-        statusEl.innerHTML = '<span style="color:var(--danger);font-size:12px">' + file.name + ': ' + (err.detail || 'Upload failed') + '</span>';
+        if (fileItem) {
+          fileItem.innerHTML = '<span style="color:var(--danger)">✗</span><span style="color:var(--danger)">' + file.name + ': ' + (err.detail || 'Upload failed') + '</span>';
+        }
         continue;
       }
       const data = await resp.json();
@@ -958,6 +1013,14 @@ $('#uploadBtn').addEventListener('click', async () => {
       if (data.bank_accounts && data.bank_accounts.length) state.uploadedData.banking = data.bank_accounts;
       if (data.credit_cards && data.credit_cards.length) state.uploadedData.credit_cards = data.credit_cards;
       if (data.spending && data.spending.length) state.uploadedData.spending = data.spending;
+      saveUploadedData();
+      console.log('[upload] Stored data for', file.name, ':', JSON.stringify({
+        inv: (data.investments||[]).length,
+        bank: (data.bank_accounts||[]).length,
+        cc: (data.credit_cards||[]).length,
+        spend: (data.spending||[]).length,
+      }));
+      console.log('[upload] state.uploadedData:', JSON.stringify(state.uploadedData));
 
       // Build summary of what was found
       const found = [];
@@ -966,7 +1029,11 @@ $('#uploadBtn').addEventListener('click', async () => {
       if (data.credit_cards && data.credit_cards.length) found.push(data.credit_cards.length + ' credit card(s)');
       if (data.spending && data.spending.length) found.push(data.spending.length + ' spending categor' + (data.spending.length === 1 ? 'y' : 'ies'));
 
-      statusEl.innerHTML = '<span style="color:var(--success);font-size:12px">✓ ' + file.name + ': ' + (found.join(', ') || 'no financial data found') + '</span>';
+      const totalItems = (data.investments || []).length + (data.bank_accounts || []).length + (data.credit_cards || []).length + (data.spending || []).length;
+      
+      if (fileItem) {
+        fileItem.innerHTML = '<span style="color:var(--success)">✓</span><span style="color:var(--success)">' + file.name + ' (' + totalItems + ' items)</span>';
+      }
 
       // Show preview
       let preview = document.getElementById('preview-' + file.name);
@@ -977,12 +1044,60 @@ $('#uploadBtn').addEventListener('click', async () => {
       }
       preview.innerHTML = '<div style="font-size:11px;font-weight:600;margin-top:6px">' + file.name + ':</div><div class="uploaded-data">' + JSON.stringify(data, null, 2) + '</div>';
     } catch (e) {
-      statusEl.innerHTML = '<span style="color:var(--danger);font-size:12px">' + file.name + ': ' + e.message + '</span>';
+      if (fileItem) {
+        fileItem.innerHTML = '<span style="color:var(--danger)">✗</span><span style="color:var(--danger)">' + file.name + ': ' + e.message + '</span>';
+      }
     }
   }
 
+  // Re-enable submit button after upload completes
+  setStreaming(false);
+  // Clear accumulated files after upload
+  state.queuedFiles = [];
+  fileQueue.innerHTML = '';
+});
+
+// Accumulate selected files in queue
+const fileInput = $('#fileInput');
+const fileQueue = $('#fileQueue');
+
+// Initialize queued files array in state
+if (!state.queuedFiles) state.queuedFiles = [];
+
+fileInput.addEventListener('change', () => {
+  if (!fileInput.files.length) return;
+  
+  // Add new files to the queue (avoid duplicates by name)
+  const newFiles = Array.from(fileInput.files);
+  for (const file of newFiles) {
+    if (!state.queuedFiles.some(f => f.name === file.name)) {
+      state.queuedFiles.push(file);
+    }
+  }
+  
+  // Update display
+  if (state.queuedFiles.length === 0) {
+    fileQueue.innerHTML = '';
+  } else {
+    fileQueue.innerHTML = '<div style="font-weight:600;margin-bottom:4px">Selected files (' + state.queuedFiles.length + '):</div>' +
+      state.queuedFiles.map((f, idx) => '<div style="padding:2px 0;display:flex;align-items:center;gap:6px"><span>• ' + f.name + '</span><button onclick="removeQueuedFile(' + idx + ')" style="padding:0 4px;font-size:10px;border:1px solid var(--border);border-radius:3px;background:var(--surface);cursor:pointer">×</button></div>').join('');
+  }
+  
+  // Clear the input so the same file can be selected again
   fileInput.value = '';
 });
+
+// Function to remove a file from queue
+function removeQueuedFile(idx) {
+  state.queuedFiles.splice(idx, 1);
+  const fileQueue = document.getElementById('fileQueue');
+  if (state.queuedFiles.length === 0) {
+    fileQueue.innerHTML = '';
+  } else {
+    fileQueue.innerHTML = '<div style="font-weight:600;margin-bottom:4px">Selected files (' + state.queuedFiles.length + '):</div>' +
+      state.queuedFiles.map((f, i) => '<div style="padding:2px 0;display:flex;align-items:center;gap:6px"><span>• ' + f.name + '</span><button onclick="removeQueuedFile(' + i + ')" style="padding:0 4px;font-size:10px;border:1px solid var(--border);border-radius:3px;background:var(--surface);cursor:pointer">×</button></div>').join('');
+  }
+}
 
 // Drag and drop
 const uploadSection = $('#uploadSection');
@@ -992,7 +1107,10 @@ uploadSection.addEventListener('drop', (e) => {
   e.preventDefault();
   uploadSection.style.borderColor = '';
   if (e.dataTransfer.files.length) {
-    $('#fileInput').files = e.dataTransfer.files;
+    const input = $('#fileInput');
+    input.files = e.dataTransfer.files;
+    // Trigger change event to update queue display
+    input.dispatchEvent(new Event('change'));
   }
 });
 
@@ -1040,22 +1158,37 @@ function streamSSE(url, body, onChunk, onDone, onError) {
           _streamBuffer = '';
           _renderedUpTo = 0;
 
+          console.log('[SSE done] Streamed text length:', streamedText.length);
+          console.log('[SSE done] Has SUGGESTED_FOLLOWUPS:', streamedText.includes('SUGGESTED_FOLLOWUPS'));
+          console.log('[SSE done] Last 200 chars:', streamedText.slice(-200));
+
           // Strip JSON code blocks from the streamed text
           let cleanText = streamedText
             .replace(/```json[\s\S]*?```/g, '')
             .replace(/```[\s\S]*?```/g, '')
             .trim();
 
+          console.log('[SSE done] cleanText length:', cleanText.length);
+          console.log('[SSE done] cleanText has SUGGESTED:', cleanText.includes('SUGGESTED'));
+
           if (cleanText && cleanText.length > 100) {
             // Render the streamed markdown as rich HTML
             msgEl.style.whiteSpace = 'normal';
             msgEl.innerHTML = formatAgentText(cleanText);
+          } else if (cleanText) {
+            // Short text — still render it
+            msgEl.style.whiteSpace = 'normal';
+            msgEl.innerHTML = formatAgentText(cleanText);
           } else {
-            // Short or no text — show the structured assessment card
+            // No streamed text — show the structured assessment card only
             msgEl.remove();
             addRichAssessment(data.assessment);
           }
         } else {
+          // No assessment — just finalize the streamed text
+          console.log('[SSE done no-assessment] streamBuffer length:', _streamBuffer.length);
+          console.log('[SSE done no-assessment] Has SUGGESTED:', _streamBuffer.includes('SUGGESTED'));
+          console.log('[SSE done no-assessment] Last 200:', _streamBuffer.slice(-200));
           finalizeAgent(msgEl);
         }
         if (onDone) onDone(data, msgEl);
@@ -1131,19 +1264,28 @@ function renderAssumptionSummaryHTML(summary) {
     if (ed.total_bank_balance != null) html += '<tr><td>Total Bank Balance</td><td>' + formatCurrency(ed.total_bank_balance) + '</td></tr>';
     if (ed.total_credit_card_balance != null) html += '<tr><td>Total Credit Card Balance</td><td>' + formatCurrency(ed.total_credit_card_balance) + '</td></tr>';
     if (ed.monthly_income != null) html += '<tr><td>Monthly Income</td><td>' + formatCurrency(ed.monthly_income) + '</td></tr>';
-    if (ed.monthly_expenses != null) html += '<tr><td>Monthly Expenses</td><td>' + formatCurrency(ed.monthly_expenses) + '</td></tr>';
-    const knownKeys = ['accounts_found','total_investment_balance','total_bank_balance','total_credit_card_balance','monthly_income','monthly_expenses'];
-    for (const [k, v] of Object.entries(ed)) {
-      if (!knownKeys.includes(k)) html += '<tr><td>' + escHTML(k.replace(/_/g, ' ')) + '</td><td>' + escHTML(String(v)) + '</td></tr>';
-    }
     html += '</tbody></table>';
+    
+    // Render spending breakdown as a separate table if present
+    if (ed.spending_breakdown && Array.isArray(ed.spending_breakdown) && ed.spending_breakdown.length > 0) {
+      html += '<div class="section-title">Average Monthly Spending by Category</div>';
+      html += '<table><tbody>';
+      let total = 0;
+      for (const item of ed.spending_breakdown) {
+        const amount = item.monthly_amount || 0;
+        total += amount;
+        html += '<tr><td>' + escHTML(item.category || 'Unknown') + '</td><td>' + formatCurrency(amount) + '</td></tr>';
+      }
+      html += '<tr style="border-top:2px solid var(--text);font-weight:700"><td>Total Monthly Expenses</td><td>' + formatCurrency(total) + '</td></tr>';
+      html += '</tbody></table>';
+    }
   }
 
   if (summary.assumptions) {
     html += '<div class="section-title">Key Assumptions</div>';
     html += '<table><tbody>';
-    const labels = {retirement_age:'Retirement Age',inflation_rate:'Inflation Rate',expected_investment_return:'Expected Investment Return',social_security_start_age:'Social Security Start Age',life_expectancy:'Life Expectancy'};
-    const pctKeys = ['inflation_rate','expected_investment_return'];
+    const labels = {retirement_age:'Retirement Age',inflation_rate:'Inflation Rate',life_expectancy:'Life Expectancy'};
+    const pctKeys = ['inflation_rate'];
     for (const [k, v] of Object.entries(summary.assumptions)) {
       const label = labels[k] || k.replace(/_/g, ' ');
       const display = pctKeys.includes(k) ? v + '%' : v;
@@ -1202,105 +1344,50 @@ function addAssumptionConfirmation(summary, profile, personalInfo) {
 
   const label = document.createElement('div');
   label.style.cssText = 'font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px';
-  label.textContent = 'Review the assumptions above. Confirm to proceed, provide corrections, or answer the questions.';
+  label.textContent = 'Review the assumptions above. Add any corrections or additional information below, then confirm to proceed.';
   controlsDiv.appendChild(label);
 
-  // Additional info text area (for answering missing data questions)
-  if (summary.missing_data_questions && summary.missing_data_questions.length) {
-    const infoLabel = document.createElement('div');
-    infoLabel.style.cssText = 'font-size:12px;color:var(--muted);margin-bottom:4px';
-    infoLabel.textContent = 'Answer any of the questions above (or skip to use defaults):';
-    controlsDiv.appendChild(infoLabel);
-
-    const infoArea = document.createElement('textarea');
-    infoArea.id = 'missingDataAnswers';
-    infoArea.rows = 3;
-    infoArea.placeholder = 'e.g. We own a home worth $850K with $320K mortgage at $2,400/mo. No car loans. 529 accounts total $45K.';
-    infoArea.style.cssText = 'padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;width:100%;resize:vertical;font-family:inherit';
-    controlsDiv.appendChild(infoArea);
-  }
-
-  const correctionInput = document.createElement('input');
-  correctionInput.type = 'text';
-  correctionInput.placeholder = 'Assumption corrections: e.g. inflation_rate=2.5, retirement_age=67';
-  correctionInput.style.cssText = 'padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;width:100%';
-  controlsDiv.appendChild(correctionInput);
-
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex;gap:8px;margin-top:4px';
+  // Combined freeform text area for corrections and additional info
+  const feedbackArea = document.createElement('textarea');
+  feedbackArea.id = 'assumptionFeedback';
+  feedbackArea.rows = 4;
+  feedbackArea.placeholder = 'Optional: Provide corrections or additional information.\n\nExamples:\n• We own a home worth $850K with $320K mortgage at $2,400/mo\n• Retirement age should be 62, not 65\n• We have 529 accounts totaling $45K for the kids';
+  feedbackArea.style.cssText = 'padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:13px;width:100%;resize:vertical;font-family:inherit';
+  controlsDiv.appendChild(feedbackArea);
 
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'btn-primary';
-  confirmBtn.style.cssText = 'padding:8px 20px;font-size:13px';
-  confirmBtn.textContent = 'Confirm';
-
-  const correctBtn = document.createElement('button');
-  correctBtn.className = 'btn-sm';
-  correctBtn.style.cssText = 'padding:8px 20px;font-size:13px;border:1px solid var(--primary);color:var(--primary)';
-  correctBtn.textContent = 'Correct';
-
-  btnRow.appendChild(confirmBtn);
-  btnRow.appendChild(correctBtn);
-  controlsDiv.appendChild(btnRow);
+  confirmBtn.style.cssText = 'padding:10px 24px;font-size:14px;width:100%';
+  confirmBtn.textContent = 'Confirm & Run Assessment';
+  controlsDiv.appendChild(confirmBtn);
+  
   chatThread.appendChild(controlsDiv);
   scrollToBottom();
 
-  // Confirm: POST to /confirm-assumptions with optional additional info
+  // Confirm: POST to /confirm-assumptions with feedback
   confirmBtn.addEventListener('click', () => {
-    // Capture any additional info answers
-    const infoArea = document.getElementById('missingDataAnswers');
-    const additionalInfo = infoArea ? infoArea.value.trim() : '';
-    if (additionalInfo) {
-      summary.additional_context = additionalInfo;
+    const feedback = feedbackArea.value.trim();
+    if (feedback) {
+      summary.additional_context = feedback;
     }
     controlsDiv.remove();
-    const msg = additionalInfo
-      ? 'Confirmed assumptions with additional info: ' + additionalInfo.slice(0, 100) + (additionalInfo.length > 100 ? '...' : '')
+    const msg = feedback
+      ? 'Confirmed with feedback: ' + feedback.slice(0, 100) + (feedback.length > 100 ? '...' : '')
       : 'Confirmed assumptions. Running assessment...';
     addMessage(msg, 'user');
     runConfirmAssessment(profile, personalInfo, summary, null);
-  });
-
-  // Correct: parse corrections and re-POST to /assumptions
-  correctBtn.addEventListener('click', () => {
-    const raw = correctionInput.value.trim();
-    if (!raw) {
-      correctionInput.style.borderColor = 'var(--danger)';
-      return;
-    }
-    correctionInput.style.borderColor = '';
-
-    // Parse corrections like "inflation_rate=2.5, retirement_age=67"
-    const corrections = {};
-    const parts = raw.split(',');
-    for (const part of parts) {
-      const eqIdx = part.indexOf('=');
-      if (eqIdx > 0) {
-        const key = part.slice(0, eqIdx).trim();
-        let val = part.slice(eqIdx + 1).trim();
-        // Try to parse as number
-        const num = Number(val);
-        if (!isNaN(num) && val !== '') val = num;
-        corrections[key] = val;
-      }
-    }
-
-    controlsDiv.remove();
-    addMessage('Corrections: ' + raw, 'user');
-    addMessage('Re-generating assumptions with corrections...', 'system');
-
-    // Re-POST to /assumptions — the server will re-generate
-    fetchAssumptions(profile, personalInfo, corrections);
   });
 }
 
 // ============================================================
 // Assumption flow helpers
 // ============================================================
-async function fetchAssumptions(profile, personalInfo, pendingCorrections) {
+async function fetchAssumptions(profile, personalInfo) {
   setStreaming(true);
   try {
-    const body = {profile, personal_info: personalInfo};
+    const modelId = document.getElementById('modelSelect').value;
+    console.log('[fetchAssumptions] Selected model:', modelId);
+    const body = {profile, personal_info: personalInfo, model_id: modelId};
     const resp = await fetch('/assumptions', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -1313,14 +1400,7 @@ async function fetchAssumptions(profile, personalInfo, pendingCorrections) {
       return;
     }
     const summary = await resp.json();
-
-    // If there were pending corrections from a "Correct" click, apply them locally
-    // and show the updated summary
-    if (pendingCorrections) {
-      const assumptions = summary.assumptions || {};
-      Object.assign(assumptions, pendingCorrections);
-      summary.assumptions = assumptions;
-    }
+    console.log('[fetchAssumptions] Received summary:', summary);
 
     setStreaming(false);
     addAssumptionConfirmation(summary, profile, personalInfo);
@@ -1331,7 +1411,8 @@ async function fetchAssumptions(profile, personalInfo, pendingCorrections) {
 }
 
 function runConfirmAssessment(profile, personalInfo, summary, corrections) {
-  const body = {profile, personal_info: personalInfo, summary};
+  const modelId = document.getElementById('modelSelect').value;
+  const body = {profile, personal_info: personalInfo, summary, model_id: modelId};
   if (corrections) body.corrections = corrections;
 
   streamSSE('/confirm-assumptions', body,
@@ -1362,6 +1443,8 @@ $('#submitAssessment').addEventListener('click', () => {
   if (husbandDob === null || wifeDob === null) return;
 
   const profile = buildProfile();
+  console.log('[submitAssessment] uploadedData:', JSON.stringify(state.uploadedData));
+  console.log('[submitAssessment] profile:', JSON.stringify(profile));
   const personal_info = {
     husband_birthdate: husbandDob,
     wife_birthdate: wifeDob,
@@ -1375,15 +1458,32 @@ $('#submitAssessment').addEventListener('click', () => {
   inputPanel.classList.add('hidden');
 
   // Step 1: Fetch assumptions for review
-  fetchAssumptions(profile, personal_info, null);
+  fetchAssumptions(profile, personal_info);
 });
 
 // ============================================================
 // Follow-up questions
 // ============================================================
+const PROCEDURAL_PATTERNS = [
+  {pattern: /re-?upload|upload.*(again|new|more|different)|start.*(over|fresh)/i,
+   response: 'Yes! Click the 📎 button next to the input bar to upload new files. The data will be incorporated into your assessment automatically. Or click "New Session" to start completely fresh with the data input panel.'},
+  {pattern: /how.*(use|work)|what.*(can|do)|help/i,
+   response: 'You can ask me anything about your retirement plan! Try questions like:\n- "What if I retire at 62 instead?"\n- "Break down my spending and suggest cuts"\n- "How much do I need to save monthly to retire by 60?"\n\nYou can also upload additional financial files using the 📎 button.'},
+];
+
 function sendFollowUp() {
   const q = followUpInput.value.trim();
   if (!q || !state.sessionId || state.streaming) return;
+
+  // Check for procedural questions that don't need the agent
+  for (const {pattern, response} of PROCEDURAL_PATTERNS) {
+    if (pattern.test(q)) {
+      addMessage(q, 'user');
+      followUpInput.value = '';
+      addMessage(response, 'agent');
+      return;
+    }
+  }
 
   addMessage(q, 'user');
   followUpInput.value = '';
@@ -1429,28 +1529,59 @@ chatFileInput.addEventListener('change', async () => {
   if (!chatFileInput.files.length || !state.sessionId || state.streaming) return;
 
   const files = Array.from(chatFileInput.files);
-  addMessage('Uploading ' + files.length + ' file(s): ' + files.map(f => f.name).join(', '), 'user');
+  
+  // Create a status message showing queued files
+  const statusMsg = document.createElement('div');
+  statusMsg.className = 'msg system';
+  statusMsg.style.cssText = 'font-size:12px;padding:8px 12px';
+  statusMsg.innerHTML = '<div style="font-weight:600;margin-bottom:6px">Uploading ' + files.length + ' file(s)...</div>';
+  
+  const fileList = document.createElement('div');
+  fileList.style.cssText = 'display:flex;flex-direction:column;gap:4px';
+  
+  for (const file of files) {
+    const fileItem = document.createElement('div');
+    fileItem.id = 'upload-status-' + file.name.replace(/[^a-zA-Z0-9]/g, '_');
+    fileItem.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0';
+    fileItem.innerHTML = '<span class="spinner" style="width:12px;height:12px"></span><span style="color:var(--muted)">' + file.name + '</span>';
+    fileList.appendChild(fileItem);
+  }
+  
+  statusMsg.appendChild(fileList);
+  chatThread.appendChild(statusMsg);
+  scrollToBottom();
 
   setStreaming(true);
 
   // Upload and parse each file via smart endpoint (handles PDFs, auto-detects categories)
   const allParsed = [];
   for (const file of files) {
+    const fileItem = document.getElementById('upload-status-' + file.name.replace(/[^a-zA-Z0-9]/g, '_'));
+    
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('model_id', document.getElementById('chatModelSelect').value);
 
     try {
       const resp = await fetch('/upload-smart', {method: 'POST', body: formData});
       if (!resp.ok) {
         const err = await resp.json();
-        addMessage('Error parsing ' + file.name + ': ' + (err.detail || 'Failed'), 'error');
+        if (fileItem) {
+          fileItem.innerHTML = '<span style="color:var(--danger)">✗</span><span style="color:var(--danger)">' + file.name + ': ' + (err.detail || 'Failed') + '</span>';
+        }
         continue;
       }
       const data = await resp.json();
       const totalAccounts = (data.investments || []).length + (data.bank_accounts || []).length + (data.credit_cards || []).length + (data.spending || []).length;
       allParsed.push({filename: file.name, accounts: totalAccounts, data: data});
+      
+      if (fileItem) {
+        fileItem.innerHTML = '<span style="color:var(--success)">✓</span><span style="color:var(--success)">' + file.name + ' (' + totalAccounts + ' items)</span>';
+      }
     } catch (e) {
-      addMessage('Error uploading ' + file.name + ': ' + e.message, 'error');
+      if (fileItem) {
+        fileItem.innerHTML = '<span style="color:var(--danger)">✗</span><span style="color:var(--danger)">' + file.name + ': ' + e.message + '</span>';
+      }
     }
   }
 
@@ -1466,7 +1597,7 @@ chatFileInput.addEventListener('change', async () => {
     const d = p.data;
     const parts = [];
     if (d.investments && d.investments.length) {
-      parts.push(d.investments.length + ' investment(s): ' + d.investments.map(i => i.account_type + ' $' + (i.balance || 0).toLocaleString()).join(', '));
+      parts.push(d.investments.length + ' investment(s): ' + d.investments.map(i => i.account_type + ' $' + (i.balance || 0).toLocaleString() + (i.holdings ? ' [' + i.holdings + ']' : '')).join(', '));
     }
     if (d.bank_accounts && d.bank_accounts.length) {
       parts.push(d.bank_accounts.length + ' bank account(s): ' + d.bank_accounts.map(b => b.account_type + ' $' + (b.balance || 0).toLocaleString()).join(', '));
@@ -1558,6 +1689,14 @@ async function loadSession(sessionId) {
 
 // Load sessions on startup
 loadSessions();
+
+// Sync model selectors
+document.getElementById('modelSelect').addEventListener('change', function() {
+  document.getElementById('chatModelSelect').value = this.value;
+});
+document.getElementById('chatModelSelect').addEventListener('change', function() {
+  document.getElementById('modelSelect').value = this.value;
+});
 </script>
 </body>
 </html>

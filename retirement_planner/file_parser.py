@@ -505,9 +505,14 @@ def _chunk_by_lines(raw_content: str, max_chars: int) -> list[str]:
 
 def _extract_all_from_chunk(agent, chunk: str, file_path: str) -> dict:
     """Send a single chunk to the agent and extract financial data."""
+    import os
+    filename = os.path.basename(file_path)
     prompt = (
-        "Extract ALL financial data from the following file content.\n"
-        "The file may contain account summaries, transaction ledgers, or any mix.\n\n"
+        f"Extract ALL financial data from the following file: {filename}\n"
+        "The file may contain account summaries, transaction ledgers, or any mix.\n"
+        "CRITICAL: Treat each unique account number + fund combination as a SEPARATE investment.\n"
+        "If the same plan number appears with different funds, list each fund as a separate holding within ONE account.\n"
+        "Include the account number in the account_type to distinguish accounts.\n\n"
         "IMPORTANT: If this is transaction-level data (a spending/activity log), you should:\n"
         "- Identify each unique bank account and estimate monthly_income_deposits by summing\n"
         "  income/deposit/payroll transactions per month (use the most recent full month).\n"
@@ -532,7 +537,19 @@ def _extract_all_from_chunk(agent, chunk: str, file_path: str) -> dict:
         result = agent(prompt)
         response_text = str(result)
     except Exception as exc:
-        raise FileParseError(file_path, f"Agent failed to process content: {exc}")
+        # If extraction model fails (e.g., Nova Lite tool_use error), retry with default model
+        model_id = getattr(agent, '_model_id', '')
+        if 'nova' in model_id.lower():
+            print(f"  [fallback] {model_id} failed, retrying with Kimi K2.5...")
+            from retirement_planner.agent import create_agent as _create_agent
+            fallback = _create_agent(model_id="kimi")
+            try:
+                result = fallback(prompt)
+                response_text = str(result)
+            except Exception as exc2:
+                raise FileParseError(file_path, f"Agent failed to process content: {exc2}")
+        else:
+            raise FileParseError(file_path, f"Agent failed to process content: {exc}")
 
     try:
         records = _extract_json_from_response(response_text)
@@ -541,7 +558,20 @@ def _extract_all_from_chunk(agent, chunk: str, file_path: str) -> dict:
         else:
             data = records[0] if records else {}
     except ValueError:
-        raise FileParseError(file_path, "Agent response did not contain valid JSON")
+        # If extraction model failed to produce JSON, retry with fallback
+        _mid = getattr(agent, '_model_id', '')
+        if 'nova' in _mid.lower() or 'scout' in _mid.lower():
+            print(f"  [fallback] {_mid} produced no JSON, retrying with Kimi...")
+            from retirement_planner.agent import create_agent as _create_agent
+            _fb = _create_agent(model_id="kimi")
+            try:
+                result = _fb(prompt)
+                records = _extract_json_from_response(str(result))
+                data = records[0] if records else {}
+            except Exception:
+                raise FileParseError(file_path, "Agent response did not contain valid JSON")
+        else:
+            raise FileParseError(file_path, "Agent response did not contain valid JSON")
 
     if not isinstance(data, dict):
         raise FileParseError(file_path, "Expected a JSON object with investments, bank_accounts, credit_cards keys")
@@ -549,7 +579,7 @@ def _extract_all_from_chunk(agent, chunk: str, file_path: str) -> dict:
     return data
 
 
-def _extract_all_from_images(agent, images: list[bytes], file_path: str) -> dict:
+def _extract_all_from_images(agent, images: list, file_path: str) -> dict:
     """Send PDF page images to the agent for visual extraction of financial data."""
     instruction = (
         "Extract ALL financial data from these document page images.\n"
@@ -659,6 +689,407 @@ def _validate_and_collect(data: dict, file_path: str):
     return investments, bank_accounts, credit_cards, spending
 
 
+# ---------------------------------------------------------------------------
+# Fuzzy column header matching
+# ---------------------------------------------------------------------------
+
+# Map canonical names to common variations (all lowercase)
+_COLUMN_ALIASES = {
+    "account_type": ["account type", "acct type", "type", "account category"],
+    "account_name": ["account name", "acct name", "name", "account", "description"],
+    "amount": ["amount", "total", "value", "total value", "balance", "amt"],
+    "category": ["category", "cat", "spending category", "expense category"],
+    "date": ["date", "transaction date", "posted date", "post date", "trade date"],
+    "institution": ["institution name", "institution", "bank", "bank name"],
+    "account_number": ["account number", "acct number", "account no", "acct no", "acct #"],
+    "symbol": ["symbol", "ticker", "ticker symbol"],
+    "shares": ["shares", "quantity", "qty", "units"],
+    "share_price": ["share price", "price", "unit price", "nav"],
+}
+
+
+def _match_column(fields: list[str], canonical: str) -> tuple[str | None, str]:
+    """Match a canonical column name against actual CSV headers.
+
+    Returns (matched_field_name, confidence) where confidence is HIGH/MEDIUM/LOW.
+    """
+    aliases = _COLUMN_ALIASES.get(canonical, [canonical])
+    lower_fields = {f.lower().strip(): f for f in fields}
+
+    # Exact match
+    for alias in aliases:
+        if alias in lower_fields:
+            return lower_fields[alias], "HIGH"
+
+    # Substring match
+    for alias in aliases:
+        for lf, orig in lower_fields.items():
+            if alias in lf or lf in alias:
+                return orig, "MEDIUM"
+
+    return None, "LOW"
+
+
+def _try_csv_bank_accounts(raw_content: str) -> tuple[list[BankAccount] | None, str]:
+    """Try to extract bank account data directly from CSV.
+
+    Returns (list of BankAccount or None, confidence level).
+    """
+    import csv
+    import io
+    from collections import defaultdict
+
+    try:
+        reader = csv.DictReader(io.StringIO(raw_content))
+        fields = [f.strip() for f in (reader.fieldnames or [])]
+    except Exception:
+        return None, "LOW"
+
+    type_col, type_conf = _match_column(fields, "account_type")
+    amt_col, amt_conf = _match_column(fields, "amount")
+    date_col, _ = _match_column(fields, "date")
+    name_col, _ = _match_column(fields, "account_name")
+    inst_col, _ = _match_column(fields, "institution")
+
+    if not type_col or not amt_col:
+        return None, "LOW"
+
+    confidence = min(type_conf, amt_conf, key=lambda x: ["HIGH", "MEDIUM", "LOW"].index(x))
+
+    # Aggregate by account: track deposits (negative amounts in some formats, positive in others)
+    accounts: dict[str, dict] = defaultdict(lambda: {"deposits": 0.0, "count": 0})
+    months: set[str] = set()
+    has_cash_type = False
+
+    for row in csv.DictReader(io.StringIO(raw_content)):
+        acct_type = (row.get(type_col) or "").strip()
+        if not acct_type:
+            continue
+        # Only process cash/bank accounts
+        if not any(k in acct_type.lower() for k in ("cash", "checking", "savings", "money market", "bank", "deposit")):
+            continue
+        has_cash_type = True
+
+        acct_name = (row.get(name_col) or "").strip() if name_col else ""
+        inst = (row.get(inst_col) or "").strip() if inst_col else ""
+        key = f"{acct_name} - {inst}".strip(" -") if (acct_name or inst) else acct_type
+
+        try:
+            amount = float(row.get(amt_col, 0))
+        except (ValueError, TypeError):
+            continue
+
+        # Negative amounts are typically income/deposits in transaction exports
+        if amount < 0:
+            accounts[key]["deposits"] += abs(amount)
+        accounts[key]["count"] += 1
+
+        if date_col:
+            ds = (row.get(date_col) or "")[:7]
+            if ds:
+                months.add(ds)
+
+    if not has_cash_type:
+        return None, "LOW"
+
+    num_months = max(len(months), 1)
+    result = []
+    for key, data in sorted(accounts.items()):
+        monthly_deposits = round(data["deposits"] / num_months, 2)
+        result.append(BankAccount(
+            account_type=key,
+            balance=0,  # Transaction exports don't show current balance
+            monthly_income_deposits=monthly_deposits,
+        ))
+
+    return result if result else None, confidence
+
+
+def _try_csv_credit_cards(raw_content: str) -> tuple[list[CreditCard] | None, str]:
+    """Try to extract credit card data directly from CSV.
+
+    Returns (list of CreditCard or None, confidence level).
+    """
+    import csv
+    import io
+    from collections import defaultdict
+
+    try:
+        reader = csv.DictReader(io.StringIO(raw_content))
+        fields = [f.strip() for f in (reader.fieldnames or [])]
+    except Exception:
+        return None, "LOW"
+
+    type_col, type_conf = _match_column(fields, "account_type")
+    amt_col, amt_conf = _match_column(fields, "amount")
+    date_col, _ = _match_column(fields, "date")
+    name_col, _ = _match_column(fields, "account_name")
+    inst_col, _ = _match_column(fields, "institution")
+
+    if not type_col or not amt_col:
+        return None, "LOW"
+
+    confidence = min(type_conf, amt_conf, key=lambda x: ["HIGH", "MEDIUM", "LOW"].index(x))
+
+    accounts: dict[str, dict] = defaultdict(lambda: {"payments": 0.0, "count": 0})
+    months: set[str] = set()
+    has_cc_type = False
+
+    for row in csv.DictReader(io.StringIO(raw_content)):
+        acct_type = (row.get(type_col) or "").strip()
+        if not acct_type:
+            continue
+        if "credit" not in acct_type.lower():
+            continue
+        has_cc_type = True
+
+        acct_name = (row.get(name_col) or "").strip() if name_col else ""
+        inst = (row.get(inst_col) or "").strip() if inst_col else ""
+        key = f"{acct_name} - {inst}".strip(" -") if (acct_name or inst) else acct_type
+
+        try:
+            amount = abs(float(row.get(amt_col, 0)))
+        except (ValueError, TypeError):
+            continue
+
+        accounts[key]["payments"] += amount
+        accounts[key]["count"] += 1
+
+        if date_col:
+            ds = (row.get(date_col) or "")[:7]
+            if ds:
+                months.add(ds)
+
+    if not has_cc_type:
+        return None, "LOW"
+
+    num_months = max(len(months), 1)
+    result = []
+    for key, data in sorted(accounts.items()):
+        monthly_payment = round(data["payments"] / num_months, 2)
+        result.append(CreditCard(
+            outstanding_balance=0,
+            credit_limit=0,
+            monthly_payment=monthly_payment,
+        ))
+
+    return result if result else None, confidence
+
+
+def _summarize_csv_for_agent(raw_content: str) -> str | None:
+    """Summarize a transaction CSV into account-level data for the agent.
+
+    When spending is already extracted directly, the agent only needs to
+    identify bank accounts and credit cards. This builds a compact summary
+    with monthly totals per account instead of sending thousands of rows.
+    """
+    import csv
+    import io
+    from collections import defaultdict
+
+    try:
+        reader = csv.DictReader(io.StringIO(raw_content))
+        fields = [f.strip() for f in (reader.fieldnames or [])]
+    except Exception:
+        return None
+
+    # Need Account Type, Account Name, and Amount columns
+    type_col = next((f for f in fields if f.lower() in ('account type',)), None)
+    name_col = next((f for f in fields if f.lower() in ('account name',)), None)
+    amt_col = next((f for f in fields if f.lower() == 'amount'), None)
+    date_col = next((f for f in fields if f.lower() == 'date'), None)
+    inst_col = next((f for f in fields if f.lower() in ('institution name', 'institution')), None)
+
+    if not type_col or not amt_col:
+        return None
+
+    # Aggregate by account
+    accounts: dict[str, dict] = defaultdict(lambda: {"type": "", "total": 0.0, "income": 0.0, "expenses": 0.0, "count": 0})
+    months: set[str] = set()
+
+    for row in reader:
+        acct_type = (row.get(type_col) or '').strip()
+        acct_name = (row.get(name_col) or '').strip() if name_col else ''
+        inst = (row.get(inst_col) or '').strip() if inst_col else ''
+        key = f"{acct_type} - {acct_name} - {inst}" if inst else f"{acct_type} - {acct_name}"
+
+        try:
+            amount = float(row.get(amt_col, 0))
+        except (ValueError, TypeError):
+            continue
+
+        accounts[key]["type"] = acct_type
+        accounts[key]["count"] += 1
+        if amount > 0:
+            accounts[key]["expenses"] += amount
+        else:
+            accounts[key]["income"] += abs(amount)
+
+        if date_col:
+            date_str = (row.get(date_col) or '')[:7]
+            if date_str:
+                months.add(date_str)
+
+    if not accounts:
+        return None
+
+    num_months = max(len(months), 1)
+
+    lines = [f"Account summary ({num_months} months of transaction data):"]
+    lines.append("Account | Type | Monthly Income | Monthly Expenses | Transaction Count")
+    for key, data in sorted(accounts.items()):
+        monthly_inc = round(data["income"] / num_months, 2)
+        monthly_exp = round(data["expenses"] / num_months, 2)
+        lines.append(f"{key} | {data['type']} | ${monthly_inc} | ${monthly_exp} | {data['count']}")
+
+    lines.append("\nSpending categories have already been extracted. Focus on identifying bank accounts and credit cards only.")
+    return "\n".join(lines)
+
+
+def _try_csv_investments(raw_content: str) -> tuple[list[InvestmentAccount] | None, str]:
+    """Try to extract investment data directly from CSV.
+
+    Handles CSVs with columns like Symbol/Fund Name, Shares, Price, Total Value.
+    Also handles multi-section CSVs by trying each section separately.
+    """
+    import csv
+    import io
+
+    # Try each section of a multi-section CSV (separated by blank lines
+    # where headers change), but also try the whole file as one CSV first
+    all_investments = []
+    best_confidence = "LOW"
+
+    # First: try parsing the whole file as one CSV (handles blank-line-separated groups with same headers)
+    cleaned = "\n".join(line for line in raw_content.split("\n") if line.strip())
+    for attempt_content in [cleaned, raw_content]:
+        try:
+            reader = csv.DictReader(io.StringIO(attempt_content))
+            fields = [f.strip() for f in (reader.fieldnames or [])]
+        except Exception:
+            continue
+
+        value_col, val_conf = _match_column(fields, "amount")
+        symbol_col, _ = _match_column(fields, "symbol")
+        shares_col, _ = _match_column(fields, "shares")
+        price_col, _ = _match_column(fields, "share_price")
+        fund_col = next((f for f in fields if any(k in f.lower() for k in ("fund name", "investment name", "fund", "security"))), None)
+        acct_col = next((f for f in fields if any(k in f.lower() for k in ("account number", "plan number", "acct", "account"))), None)
+        plan_col = next((f for f in fields if "plan name" in f.lower()), None)
+
+        if not value_col or (not symbol_col and not fund_col):
+            continue
+        has_total_value = any("total value" in f.lower() for f in fields)
+        has_price = price_col is not None or any("price" in f.lower() for f in fields)
+        if not has_total_value and not has_price:
+            continue
+
+        confidence = val_conf
+        found = []
+
+        for row in csv.DictReader(io.StringIO(attempt_content)):
+            try:
+                balance = float(row.get(value_col, 0) or 0)
+            except (ValueError, TypeError):
+                continue
+            if balance <= 0:
+                continue
+
+            holdings = (row.get(symbol_col, '') or '').strip() if symbol_col else ''
+            fund_name = (row.get(fund_col, '') or '').strip() if fund_col else ''
+            acct_num = (row.get(acct_col, '') or '').strip() if acct_col else ''
+            plan_name = (row.get(plan_col, '') or '').strip() if plan_col else ''
+
+            if plan_name and acct_num:
+                acct_type = f"{plan_name} - Plan {acct_num}"
+            elif acct_num:
+                acct_type = f"Investment Account {acct_num}"
+            else:
+                acct_type = "Investment Account"
+
+            if not holdings:
+                holdings = fund_name
+
+            h_lower = holdings.lower()
+            if any(k in h_lower for k in ('bond', 'fixed', 'income', 'treasury')):
+                ret = 0.04
+            elif any(k in h_lower for k in ('money market', 'mmkt', 'cash')):
+                ret = 0.02
+            elif any(k in h_lower for k in ('target', 'balanced', 'wellington')):
+                ret = 0.06
+            else:
+                ret = 0.07
+
+            found.append(InvestmentAccount(
+                account_type=acct_type, balance=balance,
+                expected_annual_return=ret, holdings=holdings,
+            ))
+            best_confidence = "HIGH" if confidence == "HIGH" else best_confidence
+
+        if found:
+            all_investments = found
+            break  # First successful attempt wins
+
+    return all_investments if all_investments else None, best_confidence
+
+
+def _try_csv_spending(raw_content: str) -> list[MonthlySpending] | None:
+    """Try to extract spending data directly from CSV without using the agent.
+
+    Looks for Category and Amount columns. If found, aggregates transactions
+    into average monthly spending per category. Returns None if not a CSV
+    or columns not found.
+    """
+    import csv
+    import io
+    from collections import defaultdict
+
+    lines = raw_content.strip().split('\n')
+    if len(lines) < 2:
+        return None
+
+    try:
+        reader = csv.DictReader(io.StringIO(raw_content))
+        fields = [f.strip() for f in (reader.fieldnames or [])]
+    except Exception:
+        return None
+
+    # Find category and amount columns (case-insensitive)
+    cat_col = next((f for f in fields if f.lower() == 'category'), None)
+    amt_col = next((f for f in fields if f.lower() == 'amount'), None)
+    date_col = next((f for f in fields if f.lower() == 'date'), None)
+
+    if not cat_col or not amt_col:
+        return None
+
+    # Collect totals per category and track months
+    cat_totals: dict[str, float] = defaultdict(float)
+    months: set[str] = set()
+
+    for row in reader:
+        category = (row.get(cat_col) or '').strip()
+        if not category or category.lower() in ('uncategorized', ''):
+            continue
+        try:
+            amount = abs(float(row.get(amt_col, 0)))
+        except (ValueError, TypeError):
+            continue
+        cat_totals[category] += amount
+        if date_col:
+            date_str = (row.get(date_col) or '')[:7]  # YYYY-MM
+            if date_str:
+                months.add(date_str)
+
+    if not cat_totals:
+        return None
+
+    num_months = max(len(months), 1)
+    return [
+        MonthlySpending(category=cat, monthly_amount=round(total / num_months, 2))
+        for cat, total in sorted(cat_totals.items())
+    ]
+
+
 def parse_all_from_file(agent, file_path: str) -> FinancialProfile:
     """Read a file and extract all financial data categories via the agent.
 
@@ -695,8 +1126,50 @@ def parse_all_from_file(agent, file_path: str) -> FinancialProfile:
             spending=spending,
         )
 
-    # Text-based path: chunk and process
-    chunks = _chunk_by_lines(raw_content, 50000)
+    # Text-based path: try direct CSV parsing first, LLM fallback second
+    pre_investments, inv_conf = _try_csv_investments(raw_content)
+    pre_spending = _try_csv_spending(raw_content)
+    pre_banks, bank_conf = _try_csv_bank_accounts(raw_content)
+    pre_cards, cc_conf = _try_csv_credit_cards(raw_content)
+
+    direct_parsed = False
+    if pre_investments:
+        print(f"  [direct] Extracted {len(pre_investments)} investments from CSV (confidence: {inv_conf}).")
+        direct_parsed = True
+    if pre_spending:
+        print(f"  [direct] Extracted {len(pre_spending)} spending categories from CSV.")
+        direct_parsed = True
+    if pre_banks:
+        print(f"  [direct] Extracted {len(pre_banks)} bank accounts from CSV (confidence: {bank_conf}).")
+        direct_parsed = True
+    if pre_cards:
+        print(f"  [direct] Extracted {len(pre_cards)} credit cards from CSV (confidence: {cc_conf}).")
+        direct_parsed = True
+
+    # If everything was parsed directly, skip LLM entirely
+    if pre_investments and (pre_spending or pre_banks or pre_cards):
+        print(f"  [direct] All data extracted from CSV — skipping LLM.")
+        from retirement_planner.models import FinancialProfile
+        return FinancialProfile(
+            investments=pre_investments,
+            bank_accounts=pre_banks or [],
+            credit_cards=pre_cards or [],
+            spending=pre_spending or [],
+        )
+
+    # If we got spending + banks + cards directly, only send investment data to LLM
+    if pre_spending and pre_banks and pre_cards:
+        summary = _summarize_csv_for_agent(raw_content)
+        if summary:
+            raw_content = summary
+            print(f"  [direct] Summarized CSV to {len(summary)} chars for agent (investment extraction only).")
+    elif pre_spending:
+        summary = _summarize_csv_for_agent(raw_content)
+        if summary:
+            raw_content = summary
+            print(f"  [direct] Summarized CSV to {len(summary)} chars for agent (account extraction only).")
+
+    chunks = _chunk_by_lines(raw_content, 25000)
 
     if len(chunks) > 1:
         print(f"  File is large — splitting into {len(chunks)} chunks for processing.")
@@ -712,7 +1185,11 @@ def parse_all_from_file(agent, file_path: str) -> FinancialProfile:
 
         _used_image_fallback = False
         try:
-            data = _extract_all_from_chunk(agent, chunk, file_path)
+            # Use a fresh agent per chunk to avoid context window overflow
+            # from accumulated conversation history
+            from retirement_planner.agent import create_agent as _create_agent
+            chunk_agent = _create_agent(model_id=getattr(agent, '_model_id', None)) if len(chunks) > 1 else agent
+            data = _extract_all_from_chunk(chunk_agent, chunk, file_path)
             inv, bank, cc, spend = _validate_and_collect(data, file_path)
             all_investments.extend(inv)
             all_bank_accounts.extend(bank)
@@ -746,10 +1223,15 @@ def parse_all_from_file(agent, file_path: str) -> FinancialProfile:
             break  # image extraction covers all pages
 
     from retirement_planner.models import FinancialProfile
+    # Use pre-extracted CSV data if available (more accurate than agent extraction)
+    final_investments = pre_investments if pre_investments else all_investments
+    final_spending = pre_spending if pre_spending else all_spending
+    final_banks = pre_banks if pre_banks else all_bank_accounts
+    final_cards = pre_cards if pre_cards else all_credit_cards
     return FinancialProfile(
-        investments=all_investments,
-        bank_accounts=all_bank_accounts,
-        credit_cards=all_credit_cards,
-        spending=all_spending,
+        investments=final_investments,
+        bank_accounts=final_banks,
+        credit_cards=final_cards,
+        spending=final_spending,
     )
 
